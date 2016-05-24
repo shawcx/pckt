@@ -1,0 +1,3 @@
+include *.rst
+include Makefile
+recursive-include bin *
