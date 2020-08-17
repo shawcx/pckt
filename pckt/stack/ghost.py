@@ -66,24 +66,24 @@ class GhostAdapter:
 		action()
 
 	def DHCP(self):
-		self.ethout.dst = '\xff\xff\xff\xff\xff\xff'
-		self.ethout.src = self.mac
+		self.ethout.dst   = '\xff\xff\xff\xff\xff\xff'
+		self.ethout.src   = self.mac
 		self.ethout.proto = packetio.Ethernet.IP
-		
-		self.ipout.src = '0.0.0.0'
-		self.ipout.dst = '255.255.255.255'
+
+		self.ipout.src   = '0.0.0.0'
+		self.ipout.dst   = '255.255.255.255'
 		self.ipout.proto = packetio.IP.UDP
-		
+
 		self.udpout.src = 68
 		self.udpout.dst = 67
-		
+
 		dhcp = packetio.DHCP_Request()
 		dhcp.clientmac = self.mac
-		
+
 		dhcp.pack()
 
 		pkt = dhcp.pack()
-		
+
 		print `pkt`
 
 		pkt = self.udpout.pack(pkt)
@@ -91,9 +91,9 @@ class GhostAdapter:
 		pkt = self.ethout.pack(pkt)
 
 		self.Outbound(pkt)
-		
+
 		self.Loop()
-		
+
 	def Loop(self):
 		try:
 			self.pd.loop(self.Inbound, -1)
@@ -121,11 +121,11 @@ class GhostAdapter:
 
 	def HandleIP(self, pkt):
 		pkt = self.ipin.unpack(pkt)
-		
+
 		self.ipout.dst = self.ipin.src
 		self.ipout.src = self.ip
 		self.ipout.proto = self.ipin.proto
-		
+
 		if 1 == self.ipin.proto:
 			self.HandleICMP(pkt)
 		elif 6 == self.ipin.proto:
@@ -134,15 +134,15 @@ class GhostAdapter:
 			self.HandleUDP(pkt)
 		else:
 			print 'Unknown proto:', self.ipin.proto
-			
+
 	def HandleTCP(self, pkt):
 		#print 'TCP'
 		pass
-		
+
 	def HandleUDP(self, pkt):
 		#print 'UDP'
 		pass
-		
+
 	def HandleICMP(self, pkt):
 		pkt = self.icmpin.unpack(pkt)
 		if 0 == self.icmpin.type:
@@ -152,11 +152,11 @@ class GhostAdapter:
 			resp = packetio.ICMP_EchoReply(icmp)
 			resp.type = 0
 			#print icmp, resp
-			
+
 			self.Outbound(self.ethout.pack(self.ipout.pack(resp.pack(pkt))))
 		else:
 			print 'Unknown ICMP:', self.icmpin
-			
+
 	def HandleARP(self, pkt):
 		pkt = self.arpin.unpack(pkt)
 
@@ -206,11 +206,11 @@ if '__main__' == __name__:
 	if 0:
 		settings = {
 			'mac'     : '00:22:44:66:88:aa',
-			'ip'      : '172.30.77.66',	
+			'ip'      : '172.30.77.66',
 			'netmask' : '255.255.255.0',
 			}
 	else:
 		settings = None
-		
+
 	ghost = GhostAdapter(device, settings)
 

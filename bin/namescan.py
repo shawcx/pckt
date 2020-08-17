@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 
 import sys
 import socket
@@ -6,7 +6,7 @@ import threading
 import random
 import struct
 
-message = '\t\xf5\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00 CKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\x00\x00!\x00\x01'
+message = b'\t\xf5\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00 CKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\x00\x00!\x00\x01'
 
 sema = threading.BoundedSemaphore(32)
 
@@ -28,11 +28,11 @@ def scanip(ip):
         sys.stdout.write('.')
         sys.stdout.flush()
     except Exception as e:
-        print e
+        print(e)
     sema.release()
 
 if len(sys.argv) == 1:
-    print 'e.g.', sys.argv[0], '172.30.1,2.1-255'
+    print('e.g.', sys.argv[0], '172.30.1,2.1-255')
     sys.exit(-1)
 
 def parse(o):
@@ -40,7 +40,7 @@ def parse(o):
     sets = o.split(',')
     for s in sets:
         ranges = list(int(r) for r in s.split('-'))
-        if len(ranges) is 1:
+        if len(ranges) == 1:
             res.append(ranges[0])
         else:
             res.extend(range(ranges[0],ranges[1]+1))
@@ -51,12 +51,12 @@ for a in A:
     for b in B:
         for c in C:
             for d in D:
-                t = threading.Thread(target = scanip, args = ('%d.%d.%d.%d' % (a,b,c,d),))
+                t = threading.Thread(target=scanip, args=('%d.%d.%d.%d' % (a,b,c,d),))
                 t.start()
 
 t.join()
-print
+print()
 
 for ip,name in results.items():
-    print ip, '=>', name
+    print(ip, '=>', name)
 

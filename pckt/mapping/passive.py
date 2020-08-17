@@ -61,8 +61,8 @@ if False:
             fields = {}
 
             fields['mac'] = ':'.join('%.2X' % d for d in ethernet.src)
-        
-            #print('-----------------------------')    
+
+            #print('-----------------------------')
             #print(fields)
             #print('%.4X' % ethernet.proto)
 
@@ -85,7 +85,7 @@ if False:
         arp = packetio.ARP()
         length = arp.unpack(packet)
         fields['mac'] = ':'.join('%.2X' % d for d in arp.src_mac)
-        fields['ip'] = '.'.join('%d' % d for d in arp.src_ip)
+        fields['ip']  = '.'.join('%d'   % d for d in arp.src_ip)
 
     def ParseIP(self, packet, fields):
         ip = packetio.IP()
