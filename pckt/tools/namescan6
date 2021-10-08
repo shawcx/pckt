@@ -1,0 +1,54 @@
+#!/usr/bin/python
+
+import sys
+import socket
+import threading
+import struct
+
+message = '\t\xf5\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00 CKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\x00\x00!\x00\x01'
+
+sema = threading.BoundedSemaphore(32)
+
+results = {}
+
+
+def scanip(ip):
+    sema.acquire()
+    skt = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM, 17)
+    skt.settimeout(2.0)
+    try:
+        skt.sendto(message, ip)
+        (msg,client) = skt.recvfrom(1024)
+        if struct.unpack('B', msg[56])[0]:
+            results[client[0]] = msg[57:72].strip()
+            sys.stdout.write('+')
+            sys.stdout.flush()
+
+    except socket.timeout:
+        sys.stdout.write('.')
+        sys.stdout.flush()
+    except Exception as e:
+        print e
+    sema.release()
+
+
+ips = [
+    'fe80::2e76:8aff:fedc:d343%eth0',
+]
+
+
+for ip in ips:
+    addrinfo = socket.getaddrinfo(ip, 137, socket.AF_INET6, socket.SOCK_DGRAM)
+    print addrinfo[0]
+    (family, socktype, proto, canonname, sockaddr) = addrinfo[0]
+    #s = socket(family, socktype, proto)
+    #s.connect(sockaddr)
+
+    t = threading.Thread(target=scanip, args=(sockaddr,))
+    t.start()
+
+t.join()
+print
+
+for ip,name in results.items():
+    print ip, '=>', name
