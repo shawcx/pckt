@@ -4,8 +4,12 @@
 #define PY_SSIZE_T_CLEAN
 
 #include <Python.h>
-#include <structmember.h>
 #include <pcap.h>
+#include <signal.h>
+
+#if defined(_MSC_VER)
+ typedef SSIZE_T ssize_t;
+#endif
 
 #ifndef WIN32
  #include <arpa/inet.h>
@@ -18,7 +22,6 @@
  #include <sys/socket.h>
  #include <sys/types.h>
  #include <errno.h>
- #include <signal.h>
 #endif
 
 #define  DEFAULT_SNAPLEN  65535
@@ -40,18 +43,18 @@ typedef struct {
 
 static PyObject * pypcap_version   (PyObject * self);
 static PyObject * pypcap_find      (PyObject * self);
-static PyObject * pypcap_mac       (PyObject * self, PyObject * interface);
+static PyObject * pypcap_mac       (PyObject * self, PyObject * adapter);
 
 static PyPCAP * pypcap_open_live (PyObject * self, PyObject * arguments);
 static PyPCAP * pypcap_open_file (PyObject * self, PyObject * filename);
-static PyPCAP * pypcap_create    (PyObject * self, PyObject * interface);
+static PyPCAP * pypcap_create    (PyObject * self, PyObject * adapter);
 
 static PyMethodDef PyPCAP_methods[] = {
     { "version",   (PyCFunction)pypcap_version,   METH_NOARGS,  "return the version"                },
     { "find",      (PyCFunction)pypcap_find,      METH_NOARGS,  "find suitable devices in a system" },
-    { "mac",       (PyCFunction)pypcap_mac,       METH_O,       "MAC address of an interface"       },
-    { "open_live", (PyCFunction)pypcap_open_live, METH_VARARGS, "open an interface"                 },
-    { "open_dead", (PyCFunction)pypcap_open_dead, METH_VARARGS, "open an interface"                 },
+    { "mac",       (PyCFunction)pypcap_mac,       METH_O,       "MAC address of an adapter"       },
+    { "open_live", (PyCFunction)pypcap_open_live, METH_VARARGS, "open an adapter"                 },
+    //{ "open_dead", (PyCFunction)pypcap_open_dead, METH_VARARGS, "open an adapter"                 },
     { "open_file", (PyCFunction)pypcap_open_file, METH_O,       "open a file"                       },
     { "create",    (PyCFunction)pypcap_create,    METH_O,       "create a live capture handle"      },
     { NULL }
@@ -88,8 +91,8 @@ static PyObject * pypcap_getevent       (PyPCAP *self);
 #endif // WIN32
 
 static PyMethodDef PyPCAP_Type_methods[] = {
-    { "activate",      (PyCFunction)pypcap_activate,       METH_NOARGS,  "activate an interface"              },
-    { "close",         (PyCFunction)pypcap_close,          METH_NOARGS,  "close an interface"                 },
+    { "activate",      (PyCFunction)pypcap_activate,       METH_NOARGS,  "activate an adapter"              },
+    { "close",         (PyCFunction)pypcap_close,          METH_NOARGS,  "close an adapter"                 },
     { "stats",         (PyCFunction)pypcap_stats,          METH_NOARGS,  "get stats from a sessions"          },
     { "geterr",        (PyCFunction)pypcap_geterr,         METH_NOARGS,  "print the last error"               },
     { "list_datalinks",(PyCFunction)pypcap_list_datalinks, METH_NOARGS,  "return list of supported datalinks" },
@@ -101,7 +104,7 @@ static PyMethodDef PyPCAP_Type_methods[] = {
     { "breakloop",     (PyCFunction)pypcap_breakloop,      METH_NOARGS,  "cancel the callback function"       },
     { "next",          (PyCFunction)pypcap_next,           METH_NOARGS,  "read the next packet"               },
     { "fileno",        (PyCFunction)pypcap_fileno,         METH_NOARGS,  "fetch file descriptor"              },
-    { "inject",        (PyCFunction)pypcap_inject,         METH_O,       "send a packet on the interface"     },
+    { "inject",        (PyCFunction)pypcap_inject,         METH_O,       "send a packet on the adapter"     },
 #ifdef WIN32
     { "getevent",      (PyCFunction)pypcap_getevent,       METH_NOARGS,  "get an event handle"                },
 #endif // WIN32

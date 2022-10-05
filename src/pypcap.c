@@ -48,9 +48,9 @@ static PyObject * pypcap_find(PyObject *self) {
     char canonical[MAX_PATH];
 #endif // WIN32
 
-    // Returns a linked list of all interfaces in the system
-    pcap_if_t *interfaces;
-    ok = pcap_findalldevs(&interfaces, errbuf);
+    // Returns a linked list of all adapters in the system
+    pcap_if_t *adapters;
+    ok = pcap_findalldevs(&adapters, errbuf);
     if(0 > ok) {
         PyErr_SetString(pypcap_error, errbuf);
         return NULL;
@@ -59,10 +59,10 @@ static PyObject * pypcap_find(PyObject *self) {
     // Create empty dictionary
     PyObject *pyoDevDict = PyDict_New();
 
-    // Iterate through all interfaces
-    pcap_if_t *current = interfaces;
+    // Iterate through all adapters
+    pcap_if_t *current = adapters;
     while(current) {
-        // Create an empty dictionary for all the addresses associated with an interface
+        // Create an empty dictionary for all the addresses associated with an adapter
         PyObject *dict = PyDict_New();
 
         // TODO: create list of addresses
@@ -117,19 +117,19 @@ static PyObject * pypcap_find(PyObject *self) {
     }
 
     // Free the linked list
-    pcap_freealldevs(interfaces);
+    pcap_freealldevs(adapters);
 
-    // Return the dictionary of interfaces
+    // Return the dictionary of adapters
     return pyoDevDict;
 }
 
 
-static PyObject * pypcap_mac(PyObject *self, PyObject *interface) {
+static PyObject * pypcap_mac(PyObject *self, PyObject *adapter) {
     int ok;
 
-    ok = PyUnicode_Check(interface);
+    ok = PyUnicode_Check(adapter);
     if(FALSE == ok) {
-        PyErr_SetString(pypcap_error, "interface must be a string");
+        PyErr_SetString(pypcap_error, "adapter must be a string");
         return NULL;
     }
 
@@ -150,7 +150,7 @@ static PyObject * pypcap_mac(PyObject *self, PyObject *interface) {
     mib[2] = 0;
     mib[3] = AF_LINK;
     mib[4] = NET_RT_IFLIST;
-    mib[5] = if_nametoindex(PyUnicode_AsUTF8(interface));
+    mib[5] = if_nametoindex(PyUnicode_AsUTF8(adapter));
     if(mib[5] == 0) {
         //perror("if_nametoindex error");
         Py_RETURN_NONE;
@@ -179,11 +179,12 @@ static PyObject * pypcap_mac(PyObject *self, PyObject *interface) {
     free(buff);
 
     return PyBytes_FromStringAndSize((char *)ptr, 6);
+#elif WIN32
 #else // LINUX
     struct ifreq ifr;
 
     ifr.ifr_addr.sa_family = AF_INET;
-    strncpy(ifr.ifr_name, PyUnicode_AsUTF8(interface), IFNAMSIZ-1);
+    strncpy(ifr.ifr_name, PyUnicode_AsUTF8(adapter), IFNAMSIZ-1);
     ifr.ifr_name[IFNAMSIZ-1] = 0;
 
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -221,7 +222,7 @@ static PyPCAP * pypcap_open_live(PyObject *self, PyObject *arguments) {
 #ifdef WIN32
     char guid[MAX_PATH];
     if(0 > get_guid(inteface, guid)) {
-        PyErr_SetString(pypcap_error, "unknown interface");
+        PyErr_SetString(pypcap_error, "unknown adapter");
         return NULL;
     }
 #endif // WIN32
@@ -274,13 +275,13 @@ static PyPCAP * pypcap_open_file(PyObject *self, PyObject *filename) {
 }
 
 
-static PyPCAP * pypcap_create(PyObject *self, PyObject *interface) {
+static PyPCAP * pypcap_create(PyObject *self, PyObject *adapter) {
     char errbuf[PCAP_ERRBUF_SIZE];
     int ok;
 
-    ok = PyUnicode_Check(interface);
+    ok = PyUnicode_Check(adapter);
     if(FALSE == ok) {
-        PyErr_SetString(pypcap_error, "interface must be a string");
+        PyErr_SetString(pypcap_error, "adapter must be a string");
         return NULL;
     }
 
@@ -289,7 +290,7 @@ static PyPCAP * pypcap_create(PyObject *self, PyObject *interface) {
         return NULL;
     }
 
-    pypcap->pd = pcap_create(PyUnicode_AsUTF8(interface), errbuf);
+    pypcap->pd = pcap_create(PyUnicode_AsUTF8(adapter), errbuf);
     if(NULL == pypcap->pd) {
         PyErr_SetString(pypcap_error, errbuf);
         return NULL;

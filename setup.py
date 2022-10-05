@@ -7,8 +7,8 @@ import setuptools
 
 if 'Windows' == platform.system():
     defines = [('WIN32',None),('WPCAP',None)]
-    include_dirs = ['winpcap/include']
-    library_dirs = ['winpcap/lib']
+    include_dirs = ['npcap-sdk-1.13/Include']
+    library_dirs = ['npcap-sdk-1.13/Lib/x64']
     libs = ['wpcap', 'ws2_32', 'advapi32']
 elif 'Darwin' == platform.system():
     defines = [('MACOS',None)]
