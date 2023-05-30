@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 
 import sys
 import socket
@@ -28,18 +28,18 @@ def scanip(ip):
         sys.stdout.write('.')
         sys.stdout.flush()
     except Exception as e:
-        print e
+        print(e)
     sema.release()
 
 
 ips = [
-    'fe80::2e76:8aff:fedc:d343%eth0',
+    'fe80::72c:4d15:9f27:cf90%enp6s0',
 ]
 
 
 for ip in ips:
     addrinfo = socket.getaddrinfo(ip, 137, socket.AF_INET6, socket.SOCK_DGRAM)
-    print addrinfo[0]
+    print(addrinfo[0])
     (family, socktype, proto, canonname, sockaddr) = addrinfo[0]
     #s = socket(family, socktype, proto)
     #s.connect(sockaddr)
@@ -48,7 +48,7 @@ for ip in ips:
     t.start()
 
 t.join()
-print
+print()
 
 for ip,name in results.items():
-    print ip, '=>', name
+    print(ip, '=>', name)
