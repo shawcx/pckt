@@ -16,6 +16,7 @@
  #include <net/if.h>
 #ifdef MACOS
  #include <net/if_dl.h>
+ #include <sys/sysctl.h>
 #endif
  #include <netinet/in.h>
  #include <sys/ioctl.h>

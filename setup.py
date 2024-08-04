@@ -12,8 +12,9 @@ if 'Windows' == platform.system():
     libs = ['wpcap', 'ws2_32', 'advapi32']
 elif 'Darwin' == platform.system():
     defines = [('MACOS',None)]
-    include = []
-    libs    = ['pcap']
+    include_dirs = []
+    library_dirs = []
+    libs = ['pcap']
 else:
     defines = []
     include_dirs = []
