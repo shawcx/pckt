@@ -2,4 +2,7 @@ MANIFEST
 *.pyc
 /build
 /dist
+/deb_dist
+/*.tar.gz
+/*.egg-info
 /data

@@ -1,1 +1,4 @@
+include LICENSE
 include *.rst
+include src/*
+include pckt/manuf

@@ -30,7 +30,7 @@ setuptools.setup(
     packages         = setuptools.find_packages(),
 #    packages         = ['pckt'],
 #    package_dir      = {'pckt': 'pckt'},
-#    package_data     = {'pckt': ['manuf']},
+    package_data     = {'pckt': ['manuf']},
     ext_modules = [
         setuptools.Extension(
             'pckt.pcap',
