@@ -60,7 +60,9 @@ deb:
     # Ubuntu's debug symbols are a .ddeb, which Debian doesn't produce.
     - mkdir deb
     - find .. -maxdepth 1 -type f \( -name '*.deb' -o -name '*.ddeb' -o -name '*.changes' -o -name '*.buildinfo' \) -exec mv -t deb/ {} +
-    - lintian --fail-on error,warning deb/*.changes
+    # the changelog names one distribution, which the other distro's lintian rejects;
+    # it only matters for uploading the .changes to an archive
+    - lintian --fail-on error,warning --suppress-tags bad-distribution-in-changes-file deb/*.changes
     - apt-get install -y -qq ./deb/python3-pckt_*_$(dpkg --print-architecture).deb >/dev/null
     - cd / && python3 -c 'import pckt; from pckt import pcap; print(pckt.__file__, pcap.lib_version()); assert pckt.vendor("00:50:56:00:00:01") == "VMware"'
   artifacts:
