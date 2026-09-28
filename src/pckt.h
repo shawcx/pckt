@@ -1,6 +1,7 @@
 #ifndef __PYPCAP_H__
 #define __PYPCAP_H__
 
+#define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <structmember.h>
 
@@ -21,7 +22,7 @@
 
 // PCAP Module
 
-void initpypcap(void);
+PyMODINIT_FUNC PyInit_pypcap(void);
 
 static PyObject * PyPCAP_lib_version  ( PyObject * self );
 static PyObject * PyPCAP_findalldevs  ( PyObject * self );

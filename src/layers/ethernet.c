@@ -39,7 +39,7 @@ PyTypeObject PacketIO_Ethernet_Type = {
     sizeof(PacketIO_Ethernet),
     0,    // itemsize
     (destructor)PacketIO_Ethernet_Type_dealloc,
-    NULL, // print
+    0,    // vectorcall_offset
     NULL, // getattr
     NULL, // setattr
     NULL, // reserved
@@ -150,7 +150,7 @@ static PyObject * PacketIO_Ethernet_Type_str(PacketIO_Ethernet *self) {
 }
 
 static PyObject * PacketIO_Ethernet_getter(PacketIO_Ethernet *self, void *param) {
-    int field = (int)param;
+    int field = (int)(intptr_t)param;
     switch(field) {
         case PacketIO_Ethernet_DST:
             return PyBytes_FromStringAndSize((char *)self->ethernet.dst, ETHERNET_ADDR_LEN);
@@ -163,7 +163,7 @@ static PyObject * PacketIO_Ethernet_getter(PacketIO_Ethernet *self, void *param)
 }
 
 static int PacketIO_Ethernet_setter(PacketIO_Ethernet *self, PyObject *value, void *param) {
-    int field = (int)param;
+    int field = (int)(intptr_t)param;
 
     switch(field) {
         case PacketIO_Ethernet_DST:

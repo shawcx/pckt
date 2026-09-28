@@ -1,6 +1,8 @@
 #ifndef __ETHERNET_H__
 #define __ETHERNET_H__
 
+#include <stdint.h>
+
 #define ETHERNET_ADDR_LEN 6
 
 #define ETHERNET_IP   0x0800
@@ -15,6 +17,8 @@ struct Ethernet
 	uint8_t  src[ETHERNET_ADDR_LEN];
 	uint16_t type;
 };
+
+typedef struct Ethernet Ethernet;
 
 #endif // __ETHERNET_H__
 

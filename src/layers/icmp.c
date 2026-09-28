@@ -42,7 +42,7 @@ PyTypeObject PacketIO_ICMP_Type = {
     sizeof(PacketIO_ICMP),
     0,    // itemsize
     (destructor)PacketIO_ICMP_Type_dealloc,
-    NULL, // print
+    0,    // vectorcall_offset
     NULL, // getattr
     NULL, // setattr
     NULL, // reserved
@@ -119,7 +119,7 @@ static PyObject * PacketIO_ICMP_Type_str(PacketIO_ICMP *self) {
 }
 
 static PyObject * PacketIO_ICMP_getter(PacketIO_ICMP *self, void *param) {
-    int field = (int)param;
+    int field = (int)(intptr_t)param;
 
     switch(field) {
         case PacketIO_ICMP_TYPE:
@@ -137,7 +137,7 @@ static PyObject * PacketIO_ICMP_getter(PacketIO_ICMP *self, void *param) {
 }
 
 static int PacketIO_ICMP_setter(PacketIO_ICMP *self, PyObject *value, void *param) {
-    int field = (int)param;
+    int field = (int)(intptr_t)param;
 
     switch(field) {
         case PacketIO_ICMP_TYPE:

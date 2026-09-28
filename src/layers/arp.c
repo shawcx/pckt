@@ -47,7 +47,7 @@ PyTypeObject PacketIO_ARP_Type = {
     sizeof(PacketIO_ARP),
     0,    // itemsize
     (destructor)PacketIO_ARP_Type_dealloc,
-    NULL, // print
+    0,    // vectorcall_offset
     NULL, // getattr
     NULL, // setattr
     NULL, // reserved
@@ -138,7 +138,7 @@ static PyObject * PacketIO_ARP_Type_str(PacketIO_ARP *self) {
 }
 
 static PyObject * PacketIO_ARP_getter(PacketIO_ARP *self, void *param) {
-    int field = (int)param;
+    int field = (int)(intptr_t)param;
 
     switch(field) {
         case PacketIO_ARP_HW:
@@ -165,7 +165,7 @@ static PyObject * PacketIO_ARP_getter(PacketIO_ARP *self, void *param) {
 }
 
 static int PacketIO_ARP_setter(PacketIO_ARP *self, PyObject *value, void *param) {
-    int field = (int)param;
+    int field = (int)(intptr_t)param;
 
     switch(field) {
         case PacketIO_ARP_HW:

@@ -1,6 +1,8 @@
 #ifndef __IP_H__
 #define __IP_H__
 
+#include <stdint.h>
+
 #define IP_ICMP 0x01
 #define IP_IGMP 0x02
 #define IP_TCP  0x06
@@ -27,6 +29,8 @@ struct IP
 	uint32_t src;
 	uint32_t dst;
 };
+
+typedef struct IP IP;
 
 #endif // __IP_H__
 

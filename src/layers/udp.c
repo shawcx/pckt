@@ -40,7 +40,7 @@ PyTypeObject PacketIO_UDP_Type = {
     sizeof(PacketIO_UDP),
     0,    // itemsize
     (destructor)PacketIO_UDP_Type_dealloc,
-    NULL, // print
+    0,    // vectorcall_offset
     NULL, // getattr
     NULL, // setattr
     NULL, // reserved
@@ -118,7 +118,7 @@ static PyObject * PacketIO_UDP_Type_str(PacketIO_UDP *self) {
 }
 
 static PyObject * PacketIO_UDP_getter(PacketIO_UDP *self, void *param) {
-    int field = (int)param;
+    int field = (int)(intptr_t)param;
 
     switch(field) {
         case PacketIO_UDP_SRC:
@@ -134,7 +134,7 @@ static PyObject * PacketIO_UDP_getter(PacketIO_UDP *self, void *param) {
 }
 
 static int PacketIO_UDP_setter(PacketIO_UDP *self, PyObject *value, void *param) {
-    int field = (int)param;
+    int field = (int)(intptr_t)param;
 
     switch(field) {
         case PacketIO_UDP_SRC:

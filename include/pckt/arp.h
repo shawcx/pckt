@@ -1,6 +1,8 @@
 #ifndef __ARP_H__
 #define __ARP_H__
 
+#include <stdint.h>
+
 #define ARP_HW_ADDR_LEN 6
 #define ARP_PROTO_ADDR_LEN 4
 
@@ -26,6 +28,8 @@ struct ARP
 	uint8_t   dst_mac[ARP_HW_ADDR_LEN];
 	uint8_t   dst_ip[ARP_PROTO_ADDR_LEN];
 };
+
+typedef struct ARP ARP;
 
 #endif // __ARP_H__
 

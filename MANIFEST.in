@@ -1,3 +1,4 @@
 include *.rst
-include Makefile
-recursive-include bin *
+recursive-include include *.h
+recursive-include src *.c *.h
+include pckt/manuf

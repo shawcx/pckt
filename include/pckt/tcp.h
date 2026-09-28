@@ -1,6 +1,8 @@
 #ifndef __TCP_H__
 #define __TCP_H__
 
+#include <stdint.h>
+
 #define TCP_FIN 0x01
 #define TCP_SYN 0x02
 #define TCP_RST 0x04
@@ -28,6 +30,8 @@ struct TCP
 	uint16_t crc;
 	uint16_t urgent;
 };
+
+typedef struct TCP TCP;
 
 #endif // __TCP_H__
 

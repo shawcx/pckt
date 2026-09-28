@@ -50,7 +50,7 @@ PyTypeObject PacketIO_TCP_Type = {
     sizeof(PacketIO_TCP),
     0,    // itemsize
     (destructor)PacketIO_TCP_Type_dealloc,
-    NULL, // print
+    0,    // vectorcall_offset
     NULL, // getattr
     NULL, // setattr
     NULL, // reserved
@@ -128,7 +128,7 @@ static PyObject * PacketIO_TCP_Type_str(PacketIO_TCP *self) {
 }
 
 static PyObject * PacketIO_TCP_getter(PacketIO_TCP *self, void *param) {
-    int field = (int)param;
+    int field = (int)(intptr_t)param;
 
     switch(field) {
         case PacketIO_TCP_SRC:
@@ -154,7 +154,7 @@ static PyObject * PacketIO_TCP_getter(PacketIO_TCP *self, void *param) {
 }
 
 static int PacketIO_TCP_setter(PacketIO_TCP *self, PyObject *value, void *param) {
-    int field = (int)param;
+    int field = (int)(intptr_t)param;
 
     switch(field) {
         case PacketIO_TCP_SRC:

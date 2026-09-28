@@ -4,12 +4,19 @@
 #include <Python.h>
 #include <structmember.h>
 
-#include <packetio/ethernet.h>
-#include <packetio/ip.h>
-#include <packetio/arp.h>
-#include <packetio/tcp.h>
-#include <packetio/udp.h>
-#include <packetio/icmp.h>
+#ifdef WIN32
+ #include <winsock2.h>
+#else
+ // also defines the byte order macros used by the ip/tcp header bitfields
+ #include <arpa/inet.h>
+#endif
+
+#include <pckt/ethernet.h>
+#include <pckt/ip.h>
+#include <pckt/arp.h>
+#include <pckt/tcp.h>
+#include <pckt/udp.h>
+#include <pckt/icmp.h>
 
 #define  DOC_MOD  "PacketIO"
 

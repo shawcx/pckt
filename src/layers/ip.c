@@ -59,7 +59,7 @@ PyTypeObject PacketIO_IP_Type = {
     sizeof(PacketIO_IP),
     0,    // itemsize
     (destructor)PacketIO_IP_Type_dealloc,
-    NULL, // print
+    0,    // vectorcall_offset
     NULL, // getattr
     NULL, // setattr
     NULL, // reserved
@@ -172,7 +172,7 @@ static PyObject * PacketIO_IP_Type_str(PacketIO_IP *self) {
 }
 
 static PyObject * PacketIO_IP_getter(PacketIO_IP *self, void *param) {
-    int field = (int)param;
+    int field = (int)(intptr_t)param;
 
     switch(field) {
         case PacketIO_IP_VERS:
@@ -204,7 +204,7 @@ static PyObject * PacketIO_IP_getter(PacketIO_IP *self, void *param) {
 }
 
 static int PacketIO_IP_setter(PacketIO_IP *self, PyObject *value, void *param) {
-    int field = (int)param;
+    int field = (int)(intptr_t)param;
 
     switch(field) {
         case PacketIO_IP_VERS:

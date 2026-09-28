@@ -1,6 +1,8 @@
 #ifndef __ICMP_H__
 #define __ICMP_H__
 
+#include <stdint.h>
+
 #define ICMP_ECHOREPLY          0
 #define ICMP_DEST_UNREACH       3
 #define ICMP_SOURCE_QUENCH      4
@@ -52,6 +54,8 @@ struct ICMP
 	uint16_t id;
 	uint16_t seq;
 };
+
+typedef struct ICMP ICMP;
 
 #endif // __ICMP_H__
 

@@ -9,14 +9,13 @@ static PyObject * PacketIO_unpack ( PyObject *, PyObject * );
 
 static PyModuleDef packetio_module = {
     PyModuleDef_HEAD_INIT,
+    "packetio",
     DOC_MOD,
-    NULL,
     -1,
     NULL //PacketIO_methods
 };
 
-PyMODINIT_FUNC PyInit__packetio(void) {
-    PyObject *parent;
+PyMODINIT_FUNC PyInit_packetio(void) {
     PyObject *mod;
     int ok;
 
@@ -55,96 +54,92 @@ PyMODINIT_FUNC PyInit__packetio(void) {
         return NULL;
     }
 
-    parent = PyImport_ImportModule("packetio");
-
     Py_INCREF(&PacketIO_Ethernet_Type);
-    PyModule_AddObject(parent, "ethernet", (PyObject *)&PacketIO_Ethernet_Type);
+    PyModule_AddObject(mod, "ethernet", (PyObject *)&PacketIO_Ethernet_Type);
 
     Py_INCREF(&PacketIO_ARP_Type);
-    PyModule_AddObject(parent, "arp", (PyObject *)&PacketIO_ARP_Type);
+    PyModule_AddObject(mod, "arp", (PyObject *)&PacketIO_ARP_Type);
 
     Py_INCREF(&PacketIO_IP_Type);
-    PyModule_AddObject(parent, "ip", (PyObject *)&PacketIO_IP_Type);
+    PyModule_AddObject(mod, "ip", (PyObject *)&PacketIO_IP_Type);
 
     Py_INCREF(&PacketIO_TCP_Type);
-    PyModule_AddObject(parent, "udp", (PyObject *)&PacketIO_UDP_Type);
+    PyModule_AddObject(mod, "tcp", (PyObject *)&PacketIO_TCP_Type);
 
     Py_INCREF(&PacketIO_UDP_Type);
-    PyModule_AddObject(parent, "udp", (PyObject *)&PacketIO_UDP_Type);
+    PyModule_AddObject(mod, "udp", (PyObject *)&PacketIO_UDP_Type);
 
     Py_INCREF(&PacketIO_ICMP_Type);
-    PyModule_AddObject(parent, "icmp", (PyObject *)&PacketIO_ICMP_Type);
+    PyModule_AddObject(mod, "icmp", (PyObject *)&PacketIO_ICMP_Type);
 
-    PyModule_AddIntMacro(parent, ETHERNET_ADDR_LEN);
-    PyModule_AddIntMacro(parent, ETHERNET_IP);
-    PyModule_AddIntMacro(parent, ETHERNET_ARP);
-    PyModule_AddIntMacro(parent, ETHERNET_RARP);
-    PyModule_AddIntMacro(parent, ETHERNET_HDR_LEN);
+    PyModule_AddIntMacro(mod, ETHERNET_ADDR_LEN);
+    PyModule_AddIntMacro(mod, ETHERNET_IP);
+    PyModule_AddIntMacro(mod, ETHERNET_ARP);
+    PyModule_AddIntMacro(mod, ETHERNET_RARP);
+    PyModule_AddIntMacro(mod, ETHERNET_HDR_LEN);
 
-    PyModule_AddIntMacro(parent, ARP_ETH);
-    PyModule_AddIntMacro(parent, ARP_IP);
-    PyModule_AddIntMacro(parent, ARP_REQ);
-    PyModule_AddIntMacro(parent, ARP_REP);
-    PyModule_AddIntMacro(parent, RARP_REQ);
-    PyModule_AddIntMacro(parent, RARP_REP);
-    PyModule_AddIntMacro(parent, ARP_HDR_LEN);
+    PyModule_AddIntMacro(mod, ARP_ETH);
+    PyModule_AddIntMacro(mod, ARP_IP);
+    PyModule_AddIntMacro(mod, ARP_REQ);
+    PyModule_AddIntMacro(mod, ARP_REP);
+    PyModule_AddIntMacro(mod, RARP_REQ);
+    PyModule_AddIntMacro(mod, RARP_REP);
+    PyModule_AddIntMacro(mod, ARP_HDR_LEN);
 
-    PyModule_AddIntMacro(parent, IP_ICMP);
-    PyModule_AddIntMacro(parent, IP_IGMP);
-    PyModule_AddIntMacro(parent, IP_TCP);
-    PyModule_AddIntMacro(parent, IP_UDP);
-    PyModule_AddIntMacro(parent, IP_HDR_LEN);
+    PyModule_AddIntMacro(mod, IP_ICMP);
+    PyModule_AddIntMacro(mod, IP_IGMP);
+    PyModule_AddIntMacro(mod, IP_TCP);
+    PyModule_AddIntMacro(mod, IP_UDP);
+    PyModule_AddIntMacro(mod, IP_HDR_LEN);
 
-    PyModule_AddIntMacro(parent, TCP_FIN);
-    PyModule_AddIntMacro(parent, TCP_SYN);
-    PyModule_AddIntMacro(parent, TCP_RST);
-    PyModule_AddIntMacro(parent, TCP_PSH);
-    PyModule_AddIntMacro(parent, TCP_ACK);
-    PyModule_AddIntMacro(parent, TCP_URG);
-    PyModule_AddIntMacro(parent, TCP_HDR_LEN);
+    PyModule_AddIntMacro(mod, TCP_FIN);
+    PyModule_AddIntMacro(mod, TCP_SYN);
+    PyModule_AddIntMacro(mod, TCP_RST);
+    PyModule_AddIntMacro(mod, TCP_PSH);
+    PyModule_AddIntMacro(mod, TCP_ACK);
+    PyModule_AddIntMacro(mod, TCP_URG);
+    PyModule_AddIntMacro(mod, TCP_HDR_LEN);
 
-    PyModule_AddIntMacro(parent, UDP_HDR_LEN);
+    PyModule_AddIntMacro(mod, UDP_HDR_LEN);
 
-    PyModule_AddIntMacro(parent, ICMP_ECHOREPLY);
-    PyModule_AddIntMacro(parent, ICMP_DEST_UNREACH);
-    PyModule_AddIntMacro(parent, ICMP_SOURCE_QUENCH);
-    PyModule_AddIntMacro(parent, ICMP_REDIRECT);
-    PyModule_AddIntMacro(parent, ICMP_ECHO);
-    PyModule_AddIntMacro(parent, ICMP_ROUTERADVERT);
-    PyModule_AddIntMacro(parent, ICMP_ROUTERSOLICIT);
-    PyModule_AddIntMacro(parent, ICMP_TIME_EXCEEDED);
-    PyModule_AddIntMacro(parent, ICMP_PARAMETERPROB);
-    PyModule_AddIntMacro(parent, ICMP_TIMESTAMP);
-    PyModule_AddIntMacro(parent, ICMP_TIMESTAMPREPLY);
-    PyModule_AddIntMacro(parent, ICMP_INFO_REQUEST);
-    PyModule_AddIntMacro(parent, ICMP_INFO_REPLY);
-    PyModule_AddIntMacro(parent, ICMP_ADDRESS);
-    PyModule_AddIntMacro(parent, ICMP_ADDRESSREPLY);
-    PyModule_AddIntMacro(parent, ICMP_NET_UNREACH);
-    PyModule_AddIntMacro(parent, ICMP_HOST_UNREACH);
-    PyModule_AddIntMacro(parent, ICMP_PROT_UNREACH);
-    PyModule_AddIntMacro(parent, ICMP_PORT_UNREACH);
-    PyModule_AddIntMacro(parent, ICMP_FRAG_NEEDED);
-    PyModule_AddIntMacro(parent, ICMP_SR_FAILED);
-    PyModule_AddIntMacro(parent, ICMP_NET_UNKNOWN);
-    PyModule_AddIntMacro(parent, ICMP_HOST_UNKNOWN);
-    PyModule_AddIntMacro(parent, ICMP_HOST_ISOLATED);
-    PyModule_AddIntMacro(parent, ICMP_NET_ANO);
-    PyModule_AddIntMacro(parent, ICMP_HOST_ANO);
-    PyModule_AddIntMacro(parent, ICMP_NET_UNR_TOS);
-    PyModule_AddIntMacro(parent, ICMP_HOST_UNR_TOS);
-    PyModule_AddIntMacro(parent, ICMP_PKT_FILTERED);
-    PyModule_AddIntMacro(parent, ICMP_PREC_VIOLATION);
-    PyModule_AddIntMacro(parent, ICMP_PREC_CUTOFF);
-    PyModule_AddIntMacro(parent, ICMP_REDIR_NET);
-    PyModule_AddIntMacro(parent, ICMP_REDIR_HOST);
-    PyModule_AddIntMacro(parent, ICMP_REDIR_NETTOS);
-    PyModule_AddIntMacro(parent, ICMP_REDIR_HOSTTOS);
-    PyModule_AddIntMacro(parent, ICMP_EXC_TTL);
-    PyModule_AddIntMacro(parent, ICMP_EXC_FRAGTIME);
-    PyModule_AddIntMacro(parent, ICMP_HDR_LEN);
-
-    Py_DECREF(parent);
+    PyModule_AddIntMacro(mod, ICMP_ECHOREPLY);
+    PyModule_AddIntMacro(mod, ICMP_DEST_UNREACH);
+    PyModule_AddIntMacro(mod, ICMP_SOURCE_QUENCH);
+    PyModule_AddIntMacro(mod, ICMP_REDIRECT);
+    PyModule_AddIntMacro(mod, ICMP_ECHO);
+    PyModule_AddIntMacro(mod, ICMP_ROUTERADVERT);
+    PyModule_AddIntMacro(mod, ICMP_ROUTERSOLICIT);
+    PyModule_AddIntMacro(mod, ICMP_TIME_EXCEEDED);
+    PyModule_AddIntMacro(mod, ICMP_PARAMETERPROB);
+    PyModule_AddIntMacro(mod, ICMP_TIMESTAMP);
+    PyModule_AddIntMacro(mod, ICMP_TIMESTAMPREPLY);
+    PyModule_AddIntMacro(mod, ICMP_INFO_REQUEST);
+    PyModule_AddIntMacro(mod, ICMP_INFO_REPLY);
+    PyModule_AddIntMacro(mod, ICMP_ADDRESS);
+    PyModule_AddIntMacro(mod, ICMP_ADDRESSREPLY);
+    PyModule_AddIntMacro(mod, ICMP_NET_UNREACH);
+    PyModule_AddIntMacro(mod, ICMP_HOST_UNREACH);
+    PyModule_AddIntMacro(mod, ICMP_PROT_UNREACH);
+    PyModule_AddIntMacro(mod, ICMP_PORT_UNREACH);
+    PyModule_AddIntMacro(mod, ICMP_FRAG_NEEDED);
+    PyModule_AddIntMacro(mod, ICMP_SR_FAILED);
+    PyModule_AddIntMacro(mod, ICMP_NET_UNKNOWN);
+    PyModule_AddIntMacro(mod, ICMP_HOST_UNKNOWN);
+    PyModule_AddIntMacro(mod, ICMP_HOST_ISOLATED);
+    PyModule_AddIntMacro(mod, ICMP_NET_ANO);
+    PyModule_AddIntMacro(mod, ICMP_HOST_ANO);
+    PyModule_AddIntMacro(mod, ICMP_NET_UNR_TOS);
+    PyModule_AddIntMacro(mod, ICMP_HOST_UNR_TOS);
+    PyModule_AddIntMacro(mod, ICMP_PKT_FILTERED);
+    PyModule_AddIntMacro(mod, ICMP_PREC_VIOLATION);
+    PyModule_AddIntMacro(mod, ICMP_PREC_CUTOFF);
+    PyModule_AddIntMacro(mod, ICMP_REDIR_NET);
+    PyModule_AddIntMacro(mod, ICMP_REDIR_HOST);
+    PyModule_AddIntMacro(mod, ICMP_REDIR_NETTOS);
+    PyModule_AddIntMacro(mod, ICMP_REDIR_HOSTTOS);
+    PyModule_AddIntMacro(mod, ICMP_EXC_TTL);
+    PyModule_AddIntMacro(mod, ICMP_EXC_FRAGTIME);
+    PyModule_AddIntMacro(mod, ICMP_HDR_LEN);
 
     return mod;
 }

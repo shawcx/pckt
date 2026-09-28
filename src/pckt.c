@@ -1,17 +1,25 @@
 #include "pckt.h"
 
-void initpypcap() {
+static PyModuleDef pypcap_module = {
+    PyModuleDef_HEAD_INIT,
+    "pypcap",
+    "PCAP Python wrapper",
+    -1,
+    PyPCAP_module_methods
+};
+
+PyMODINIT_FUNC PyInit_pypcap(void) {
     PyObject *mod;
     int ok;
 
     ok = PyType_Ready(&PyPCAP_Type);
-    if(0 > ) {
-        return;
+    if(0 > ok) {
+        return NULL;
     }
 
-    mod = Py_InitModule3("pypcap", PyPCAP_module_methods, "PCAP Python wrapper");
+    mod = PyModule_Create(&pypcap_module);
     if(NULL == mod) {
-        return;
+        return NULL;
     }
 
     Py_INCREF(&PyPCAP_Type);
@@ -26,6 +34,8 @@ void initpypcap() {
 #ifdef PCAP_NETMASK_UNKNOWN
     PyModule_AddIntConstant(mod, "NETMASK_UNKNOWN", PCAP_NETMASK_UNKNOWN);
 #endif
+
+    return mod;
 }
 
 static PyObject * PyPCAP_lib_version(PyObject *self) {
@@ -56,7 +66,7 @@ static PyObject * find_mac(char *ifname) {
     }
 
     if(0 == ioctl(fd, SIOCGIFHWADDR, &ifr)) {
-        macaddr = PyString_FromStringAndSize((char *)ifr.ifr_hwaddr.sa_data, 6);
+        macaddr = PyBytes_FromStringAndSize((char *)ifr.ifr_hwaddr.sa_data, 6);
     }
 
 #endif
@@ -103,21 +113,21 @@ static PyObject * PyPCAP_findalldevs(PyObject *self) {
             case AF_INET:
                 if(address->addr) {
                     sai = (struct sockaddr_in *)address->addr;
-                    value = PyString_FromString(inet_ntoa(sai->sin_addr));
+                    value = PyUnicode_FromString(inet_ntoa(sai->sin_addr));
                     PyDict_SetItemString(addrdict, "ip", value);
                     Py_DECREF(value);
                 }
 
                 if(address->netmask) {
                     sai = (struct sockaddr_in *)address->netmask;
-                    value = PyString_FromString(inet_ntoa(sai->sin_addr));
+                    value = PyUnicode_FromString(inet_ntoa(sai->sin_addr));
                     PyDict_SetItemString(addrdict, "netmask", value);
                     Py_DECREF(value);
                 }
 
                 if(address->broadaddr) {
                     sai = (struct sockaddr_in *)address->broadaddr;
-                    value = PyString_FromString(inet_ntoa(sai->sin_addr));
+                    value = PyUnicode_FromString(inet_ntoa(sai->sin_addr));
                     PyDict_SetItemString(addrdict, "broadcast", value);
                     Py_DECREF(value);
                 }
@@ -143,8 +153,8 @@ static PyObject * PyPCAP_create(PyObject *self, PyObject *args) {
     PyPCAP *pypcap;
     const char *device;
 
-    if(!PyArg_ParseTuple(args, "s", &device)) {
-        PyErr_SetString(PyPCAP_Error, "Invalid arguments, see __doc__");
+    device = PyUnicode_AsUTF8(args);
+    if(!device) {
         return NULL;
     }
 
@@ -206,8 +216,8 @@ static PyObject * PyPCAP_open_offline(PyObject *self, PyObject *args) {
     PyPCAP *pypcap;
     const char *file;
 
-    if(!PyArg_ParseTuple(args, "s", &file)) {
-        PyErr_SetString(PyPCAP_Error, "Invalid arguments, see __doc__");
+    file = PyUnicode_AsUTF8(args);
+    if(!file) {
         return NULL;
     }
 
@@ -234,7 +244,11 @@ void pcap_callback(u_char *user, const struct pcap_pkthdr *hdr, const u_char *da
     PyObject *args;
     PyObject *retval;
 
-    args = Py_BuildValue("(s#kllO)", data, hdr->caplen, hdr->len, hdr->ts.tv_sec, hdr->ts.tv_usec, self->cbargs);
+    args = Py_BuildValue("(y#kllO)", data, (Py_ssize_t)hdr->caplen, (unsigned long)hdr->len, (long)hdr->ts.tv_sec, (long)hdr->ts.tv_usec, self->cbargs);
+    if(!args) {
+        pcap_breakloop(self->pd);
+        return;
+    }
 
     retval = PyObject_CallObject(self->cb, args);
     if(!retval) {
@@ -255,7 +269,7 @@ void PyPCAP_Type_dealloc(PyPCAP *self) {
     Py_CLEAR(self->cb);
     Py_CLEAR(self->cbargs);
 
-    PyObject_Del(self);
+    Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 PyObject * PyPCAP_Type_new(PyTypeObject *type, PyObject *args, PyObject *kwds) {
@@ -294,10 +308,13 @@ static PyObject * PyPCAP_list_datalinks(PyPCAP *self) {
     links = PyList_New(len);
 
     for(idx = 0; idx < len; ++idx) {
-        value = PyTuple_New(3);
-        PyTuple_SET_ITEM(value, 0, PyInt_FromLong(dlts[idx]));
-        PyTuple_SET_ITEM(value, 1, PyString_FromString(pcap_datalink_val_to_name(dlts[idx])));
-        PyTuple_SET_ITEM(value, 2, PyString_FromString(pcap_datalink_val_to_description(dlts[idx])));
+        // name/description may be NULL for unknown DLTs; "s" maps NULL to None
+        value = Py_BuildValue("iss", dlts[idx], pcap_datalink_val_to_name(dlts[idx]), pcap_datalink_val_to_description(dlts[idx]));
+        if(!value) {
+            pcap_free_datalinks(dlts);
+            Py_DECREF(links);
+            return NULL;
+        }
         PyList_SET_ITEM(links, idx, value);
     }
 
@@ -346,12 +363,20 @@ static PyObject * PyPCAP_setfilter(PyPCAP *self, PyObject *args) {
     struct bpf_program bpf;
     bpf_u_int32 network;
     bpf_u_int32 netmask;
+    const char *filter;
+
+    PCAPCTX;
+
+    filter = PyUnicode_AsUTF8(args);
+    if(!filter) {
+        return NULL;
+    }
 
     if(0 > pcap_lookupnet(self->device, &network, &netmask, self->errbuf)) {
         netmask = 0xffffffff;
     }
 
-    if(0 > pcap_compile(self->pd, &bpf, PyString_AsString(args), 1, netmask)) {
+    if(0 > pcap_compile(self->pd, &bpf, filter, 1, netmask)) {
         PyErr_SetString(PyPCAP_Error, pcap_geterr(self->pd));
         return NULL;
     }
@@ -379,32 +404,36 @@ static PyObject * PyPCAP_loop(PyPCAP *self, PyObject *args) {
         return NULL;
     }
 
-    Py_CLEAR(self->cb);
-    self->cb = PyTuple_GET_ITEM(args, 0);
-
-    if(!PyCallable_Check(self->cb)) {
+    if(!PyCallable_Check(PyTuple_GET_ITEM(args, 0))) {
         PyErr_SetString(PyPCAP_Error, "Invalid callback");
         return NULL;
     }
 
+    Py_CLEAR(self->cb);
+    self->cb = PyTuple_GET_ITEM(args, 0);
+
+    Py_INCREF(self->cb);
+
     if(1 < len) {
-        cnt = PyInt_AsLong(PyTuple_GET_ITEM(args, 1));
+        cnt = PyLong_AsLong(PyTuple_GET_ITEM(args, 1));
         if(cnt == -1 && PyErr_Occurred()) {
             return NULL;
         }
     }
 
-    Py_XINCREF(self->cb);
-
     Py_CLEAR(self->cbargs);
     self->cbargs = PyTuple_GetSlice(args, 2, len);
 
-    if(pcap_loop(self->pd, cnt, pcap_callback, (u_char *)self)) {
+    // the callback breaks the loop when it raises, so its exception takes priority
+    if(PCAP_ERROR == pcap_loop(self->pd, cnt, pcap_callback, (u_char *)self) && !PyErr_Occurred()) {
+        PyErr_SetString(PyPCAP_Error, pcap_geterr(self->pd));
+    }
+
+    if(PyErr_Occurred()) {
         return NULL;
     }
-    else {
-        Py_RETURN_NONE;
-    }
+
+    Py_RETURN_NONE;
 }
 
 static PyObject * PyPCAP_breakloop(PyPCAP *self) {
@@ -420,12 +449,14 @@ static PyObject * PyPCAP_next_ex(PyPCAP *self) {
     const u_char *data;
     int retval;
 
+    PCAPCTX;
+
     Py_BEGIN_ALLOW_THREADS
     retval = pcap_next_ex(self->pd, &hdr, &data);
     Py_END_ALLOW_THREADS
 
     if(1 == retval) {
-        return Py_BuildValue("s#kll", data, hdr->caplen, hdr->len, hdr->ts.tv_sec, hdr->ts.tv_usec);
+        return Py_BuildValue("y#kll", data, (Py_ssize_t)hdr->caplen, (unsigned long)hdr->len, (long)hdr->ts.tv_sec, (long)hdr->ts.tv_usec);
     }
     else if(!retval) {
         Py_RETURN_NONE;
@@ -442,7 +473,9 @@ static PyObject * PyPCAP_inject(PyPCAP *self, PyObject *args) {
     Py_ssize_t len;
     int sent;
 
-    if(-1 == PyString_AsStringAndSize(args, &data, &len)) {
+    PCAPCTX;
+
+    if(-1 == PyBytes_AsStringAndSize(args, &data, &len)) {
         return NULL;
     }
 
@@ -461,7 +494,9 @@ static PyObject * PyPCAP_sendpacket(PyPCAP *self, PyObject *args) {
     char *data;
     Py_ssize_t len;
 
-    if(-1 == PyString_AsStringAndSize(args, &data, &len)) {
+    PCAPCTX;
+
+    if(-1 == PyBytes_AsStringAndSize(args, &data, &len)) {
         return NULL;
     }
 
@@ -515,3 +550,6 @@ static PyObject * PyPCAP_stats(PyPCAP *self) {
 int pcap_compile(pcap_t *p, struct bpf_program *fp, const char *str, int optimize, bpf_u_int32 netmask);
 int pcap_dispatch(pcap_t *p, int cnt, pcap_handler callback, u_char *user);
 */
+
+#include "crc.c"
+#include "win32.c"
