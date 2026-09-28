@@ -47,7 +47,7 @@ PyObject * device_to_canonical(char *guid) {
     len = MAX_PATH;
 
     if(ERROR_SUCCESS == RegQueryValueEx(hkey, "Name", NULL, NULL, value, &len)) {
-        name = PyString_FromString(value);
+        name = PyUnicode_FromString(value);
     }
 
     RegCloseKey(hkey);
