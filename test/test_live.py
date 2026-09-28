@@ -123,10 +123,47 @@ def dns_scenario(tmp):
     return results
 
 
+def create_scenario(tmp):
+    from pckt import Ethernet, IP, UDP, pcap
+    from pckt.capture import packets
+
+    setup_link()
+    rx = pcap.create('v1')
+    rx.set_snaplen(64)
+    rx.set_promisc(True)
+    rx.set_timeout(100)
+    rx.set_immediate_mode(True)
+    results = {'warning': rx.activate(), 'snapshot': rx.snapshot()}
+    rx.setfilter('udp port 9999')
+
+    frame = (Ethernet(src=pcap.mac('v0'), dst=pcap.mac('v1')) / IP(src='10.0.0.1', dst='10.0.0.2')
+             / UDP(src=9999, dst=9999) / bytes(200)).pack()
+    results['sent'] = frame.hex()
+    pcap.open_live('v0').sendpacket(frame)
+
+    deadline = time.monotonic() + 5
+    for packet in packets(rx, 0.1):
+        if packet:
+            (data, ts, wirelen) = packet
+            results['captured'] = data.hex()
+            results['wirelen'] = wirelen
+            break
+        if time.monotonic() > deadline:
+            break
+
+    try:
+        rx.set_snaplen(128)
+    except pcap.error as e:
+        results['set_after'] = str(e)
+    return results
+
+
 def scenario(mode, tmp):
     '''runs inside the namespace; returns results for the test to check'''
     if 'dns' == mode:
         return dns_scenario(tmp)
+    if 'create' == mode:
+        return create_scenario(tmp)
     dhcp = 'dhcp' == mode
 
     setup_link()
@@ -205,6 +242,17 @@ class TestLive(unittest.TestCase):
         self.assertIn(GHOST_MAC, result['neighbor'])
         self.assertEqual(0, result['ghost_exit'], result['ghost_log'])
 
+    def test_create(self):
+        # a handle from create(), configured before activate(), captures what's sent on the peer
+        result = self.run_scenario('create')
+        self.assertIsNone(result['warning'])
+        self.assertEqual(64, result['snapshot'])
+        sent = bytes.fromhex(result['sent'])
+        self.assertIn('captured', result, 'nothing captured on v1')
+        self.assertEqual(sent[:64], bytes.fromhex(result['captured']))
+        self.assertEqual(len(sent), result['wirelen'])
+        self.assertIn("can't be changed after", result['set_after'])
+
     @unittest.skipUnless(shutil.which('dnsmasq'), 'needs dnsmasq')
     def test_dhcp(self):
         result = self.run_scenario('dhcp')
@@ -238,7 +286,7 @@ class TestLive(unittest.TestCase):
 
 
 if '__main__' == __name__:
-    if 3 == len(sys.argv) and sys.argv[1] in ('static', 'dhcp', 'dns'):
+    if 3 == len(sys.argv) and sys.argv[1] in ('static', 'dhcp', 'dns', 'create'):
         print(json.dumps(scenario(sys.argv[1], sys.argv[2])))
     else:
         unittest.main()

@@ -52,6 +52,38 @@ class TestPcap(unittest.TestCase):
             if 'ip' in info:
                 self.assertIsInstance(info['ip'], str)
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'needs a loopback named lo')
+    def test_mac(self):
+        self.assertEqual(bytes(6), pcap.mac('lo'))
+        with self.assertRaisesRegex(pcap.error, 'nosuch0'):
+            pcap.mac('nosuch0')
+        with self.assertRaises(TypeError):
+            pcap.mac(b'lo')
+        # findalldevs() reports the same address
+        for (name, info) in pcap.findalldevs().items():
+            if 'mac' in info:
+                self.assertEqual(pcap.mac(name), info['mac'], name)
+
+    def test_create(self):
+        # pcap_create() doesn't check the device; activate() does, and needs privileges
+        pd = pcap.create('nosuch0')
+        for call in (pd.snapshot, pd.datalink):
+            with self.assertRaisesRegex(pcap.error, 'not been activated'):
+                call()
+        self.assertIsNone(pd.set_snaplen(128))
+        self.assertIsNone(pd.set_promisc(False))
+        self.assertIsNone(pd.set_timeout(50))
+        self.assertIsNone(pd.set_immediate_mode(True))
+        self.assertEqual('', pd.geterr())
+        with self.assertRaises(TypeError):
+            pd.set_snaplen('128')
+        with self.assertRaisesRegex(pcap.error, 'nosuch0'):
+            pd.activate()
+        pd.close()
+        for call in (pd.activate, pd.geterr, lambda: pd.set_snaplen(128)):
+            with self.assertRaises(pcap.error):
+                call()
+
     def test_next(self):
         pd = pcap.open_offline(self.path)
         (data, ts, wirelen) = pd.next()

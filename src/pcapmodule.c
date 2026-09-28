@@ -42,17 +42,62 @@ static PyObject * PyPCAP_lib_version(PyObject *self) {
     return Py_BuildValue("s", pcap_lib_version());
 }
 
-static PyObject * find_mac(char *ifname) {
-    PyObject *macaddr = NULL;
+// fills mac[6] with the interface's hardware address; returns -1 with errno set on failure
+static int find_mac(const char *ifname, unsigned char *mac) {
+#if defined(WIN32)
 
-#ifdef WIN32
+    errno = ENOSYS;
+    return -1;
 
-    // TODO
+#elif defined(__APPLE__)
+
+    int mib[6];
+    size_t len;
+    char *buf;
+    struct sockaddr_dl *sdl;
+
+    mib[0] = CTL_NET;
+    mib[1] = AF_ROUTE;
+    mib[2] = 0;
+    mib[3] = AF_LINK;
+    mib[4] = NET_RT_IFLIST;
+    mib[5] = if_nametoindex(ifname);
+    if(0 == mib[5]) {
+        return -1;
+    }
+
+    if(0 > sysctl(mib, 6, NULL, &len, NULL, 0)) {
+        return -1;
+    }
+
+    buf = malloc(len);
+    if(!buf) {
+        return -1;
+    }
+
+    if(0 > sysctl(mib, 6, buf, &len, NULL, 0)) {
+        free(buf);
+        return -1;
+    }
+
+    // the interface's link-level address follows its if_msghdr
+    sdl = (struct sockaddr_dl *)((struct if_msghdr *)buf + 1);
+    if(6 != sdl->sdl_alen) {
+        free(buf);
+        errno = EADDRNOTAVAIL;
+        return -1;
+    }
+
+    memcpy(mac, LLADDR(sdl), 6);
+    free(buf);
+    return 0;
 
 #else
 
     struct ifreq ifr;
     int fd;
+    int ok;
+    int err;
 
     memset(&ifr, 0, sizeof(struct ifreq));
 
@@ -62,16 +107,39 @@ static PyObject * find_mac(char *ifname) {
 
     fd = socket(AF_INET, SOCK_DGRAM, 0);
     if(0 > fd) {
+        return -1;
+    }
+
+    ok = ioctl(fd, SIOCGIFHWADDR, &ifr);
+    err = errno;
+    close(fd);
+
+    if(0 > ok) {
+        errno = err;
+        return -1;
+    }
+
+    memcpy(mac, ifr.ifr_hwaddr.sa_data, 6);
+    return 0;
+
+#endif
+}
+
+static PyObject * PyPCAP_mac(PyObject *self, PyObject *args) {
+    const char *ifname;
+    unsigned char mac[6];
+
+    ifname = PyUnicode_AsUTF8(args);
+    if(!ifname) {
         return NULL;
     }
 
-    if(0 == ioctl(fd, SIOCGIFHWADDR, &ifr)) {
-        macaddr = PyBytes_FromStringAndSize((char *)ifr.ifr_hwaddr.sa_data, 6);
+    if(0 > find_mac(ifname, mac)) {
+        PyErr_Format(PyPCAP_Error, "%s: %s", ifname, strerror(errno));
+        return NULL;
     }
 
-#endif
-
-    return macaddr;
+    return PyBytes_FromStringAndSize((char *)mac, 6);
 }
 
 static PyObject * PyPCAP_findalldevs(PyObject *self) {
@@ -84,6 +152,7 @@ static PyObject * PyPCAP_findalldevs(PyObject *self) {
     pcap_addr_t *address;
     struct sockaddr *sa;
     struct sockaddr_in *sai;
+    unsigned char mac[6];
     char errbuf[PCAP_ERRBUF_SIZE];
 
     // find all interfaces
@@ -100,11 +169,22 @@ static PyObject * PyPCAP_findalldevs(PyObject *self) {
         PyDict_SetItemString(devdict, current->name, addrdict);
         Py_DECREF(addrdict);
 
-        value = find_mac(current->name);
-        if(value) {
+        if(0 == find_mac(current->name, mac)) {
+            value = PyBytes_FromStringAndSize((char *)mac, 6);
             PyDict_SetItemString(addrdict, "mac", value);
             Py_DECREF(value);
         }
+
+#ifdef WIN32
+        // the connection name ("Ethernet"), which open_live() and create() also accept
+        if(0 == strncmp(current->name, NPF_PREFIX, strlen(NPF_PREFIX))) {
+            value = device_to_canonical(current->name + strlen(NPF_PREFIX));
+            if(value) {
+                PyDict_SetItemString(addrdict, "name", value);
+                Py_DECREF(value);
+            }
+        }
+#endif
 
         address = current->addresses;
         while(address) {
@@ -156,10 +236,20 @@ static PyObject * PyPCAP_open_live(PyObject *self, PyObject *args) {
     int promisc = 1;
     int to_ms = 0;
 
+#ifdef WIN32
+    char npf[MAX_PATH];
+#endif
+
     if(!PyArg_ParseTuple(args, "s|iii", &device, &snaplen, &promisc, &to_ms)) {
         PyErr_SetString(PyPCAP_Error, "Invalid arguments, see __doc__");
         return NULL;
     }
+
+#ifdef WIN32
+    if(0 == canonical_to_device(device, npf)) {
+        device = npf;
+    }
+#endif
 
     // allocate a pcap object
     pypcap = (PyPCAP *)PyObject_CallObject((PyObject *)&PyPCAP_Type, NULL);
@@ -181,6 +271,44 @@ static PyObject * PyPCAP_open_live(PyObject *self, PyObject *args) {
 #ifdef WIN32
     pcap_setmintocopy(pypcap->pd, 14);
 #endif
+
+    return (PyObject *)pypcap;
+}
+
+static PyObject * PyPCAP_create(PyObject *self, PyObject *args) {
+    PyPCAP *pypcap;
+    const char *device;
+
+#ifdef WIN32
+    char npf[MAX_PATH];
+#endif
+
+    device = PyUnicode_AsUTF8(args);
+    if(!device) {
+        return NULL;
+    }
+
+#ifdef WIN32
+    if(0 == canonical_to_device(device, npf)) {
+        device = npf;
+    }
+#endif
+
+    pypcap = (PyPCAP *)PyObject_CallObject((PyObject *)&PyPCAP_Type, NULL);
+    if(!pypcap) {
+        PyErr_SetString(PyPCAP_Error, "Could not create a pcap handle");
+        return NULL;
+    }
+
+    // unlike pcap_open_live(), an unknown device isn't reported until activate()
+    pypcap->pd = pcap_create(device, pypcap->errbuf);
+    if(!pypcap->pd) {
+        PyErr_SetString(PyPCAP_Error, pypcap->errbuf);
+        Py_DECREF(pypcap);
+        return NULL;
+    }
+
+    snprintf(pypcap->device, sizeof(pypcap->device), "%s", device);
 
     return (PyObject *)pypcap;
 }
@@ -276,6 +404,109 @@ int PyPCAP_Type_init(PyPCAP *self, PyObject *args, PyObject *kwds) {
     return 0;
 }
 
+// the message for a pcap_activate() status; some only say what went wrong in pcap_geterr()
+static const char * activate_message(PyPCAP *self, int status) {
+    switch(status) {
+    case PCAP_WARNING:
+    case PCAP_ERROR:
+    case PCAP_ERROR_NO_SUCH_DEVICE:
+    case PCAP_ERROR_PERM_DENIED:
+#ifdef PCAP_ERROR_CAPTURE_NOTSUP
+    case PCAP_ERROR_CAPTURE_NOTSUP:
+#endif
+        if(*pcap_geterr(self->pd)) {
+            return pcap_geterr(self->pd);
+        }
+    }
+
+    return pcap_statustostr(status);
+}
+
+static PyObject * PyPCAP_activate(PyPCAP *self) {
+    int status;
+
+    PCAPCTX;
+
+    status = pcap_activate(self->pd);
+    if(0 > status) {
+        PyErr_Format(PyPCAP_Error, "%s: %s", self->device, activate_message(self, status));
+        return NULL;
+    }
+    else if(0 < status) {
+        return PyUnicode_FromString(activate_message(self, status));
+    }
+
+    Py_RETURN_NONE;
+}
+
+// the pcap_set_*() calls fail with PCAP_ERROR_ACTIVATED once the handle is active
+static PyObject * set_result(int status) {
+    if(0 > status) {
+        PyErr_SetString(PyPCAP_Error, pcap_statustostr(status));
+        return NULL;
+    }
+
+    Py_RETURN_NONE;
+}
+
+static PyObject * PyPCAP_set_snaplen(PyPCAP *self, PyObject *args) {
+    long snaplen;
+
+    PCAPCTX;
+
+    snaplen = PyLong_AsLong(args);
+    if(-1 == snaplen && PyErr_Occurred()) {
+        return NULL;
+    }
+
+    return set_result(pcap_set_snaplen(self->pd, (int)snaplen));
+}
+
+static PyObject * PyPCAP_set_promisc(PyPCAP *self, PyObject *args) {
+    int promisc;
+
+    PCAPCTX;
+
+    promisc = PyObject_IsTrue(args);
+    if(0 > promisc) {
+        return NULL;
+    }
+
+    return set_result(pcap_set_promisc(self->pd, promisc));
+}
+
+static PyObject * PyPCAP_set_timeout(PyPCAP *self, PyObject *args) {
+    long to_ms;
+
+    PCAPCTX;
+
+    to_ms = PyLong_AsLong(args);
+    if(-1 == to_ms && PyErr_Occurred()) {
+        return NULL;
+    }
+
+    return set_result(pcap_set_timeout(self->pd, (int)to_ms));
+}
+
+static PyObject * PyPCAP_set_immediate_mode(PyPCAP *self, PyObject *args) {
+    int immediate;
+
+    PCAPCTX;
+
+    immediate = PyObject_IsTrue(args);
+    if(0 > immediate) {
+        return NULL;
+    }
+
+    return set_result(pcap_set_immediate_mode(self->pd, immediate));
+}
+
+static PyObject * PyPCAP_geterr(PyPCAP *self) {
+    PCAPCTX;
+
+    return PyUnicode_FromString(pcap_geterr(self->pd));
+}
+
 static PyObject * PyPCAP_list_datalinks(PyPCAP *self) {
     PyObject *links;
     PyObject *value;
@@ -315,6 +546,10 @@ static PyObject * PyPCAP_datalink(PyPCAP *self) {
     PCAPCTX;
 
     dlt = pcap_datalink(self->pd);
+    if(0 > dlt) {
+        PyErr_SetString(PyPCAP_Error, pcap_statustostr(dlt));
+        return NULL;
+    }
 
     return Py_BuildValue("iss", dlt, pcap_datalink_val_to_name(dlt), pcap_datalink_val_to_description(dlt));
 }
@@ -542,9 +777,17 @@ static PyObject * PyPCAP_sendpacket(PyPCAP *self, PyObject *args) {
 }
 
 static PyObject * PyPCAP_snapshot(PyPCAP *self) {
+    int snaplen;
+
     PCAPCTX;
 
-    return Py_BuildValue("i", pcap_snapshot(self->pd));
+    snaplen = pcap_snapshot(self->pd);
+    if(0 > snaplen) {
+        PyErr_SetString(PyPCAP_Error, pcap_statustostr(snaplen));
+        return NULL;
+    }
+
+    return Py_BuildValue("i", snaplen);
 }
 
 static PyObject * PyPCAP_close(PyPCAP *self) {
