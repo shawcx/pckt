@@ -23,7 +23,7 @@ Fields left unset are computed when packing; anything set explicitly is
 sent as-is, so malformed packets are easy to build on purpose.
 
 Layers: Ethernet, VLAN (802.1Q), ARP, IP, IPv6, ICMP, ICMPv6 (echo,
-neighbor discovery), TCP, UDP and DHCP.
+neighbor discovery), TCP, UDP, DHCP and DNS.
 
 Install
 -------
