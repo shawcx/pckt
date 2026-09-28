@@ -2,7 +2,9 @@
 import struct
 from random import randrange
 
-class TCP:
+from .layer import Layer, checksum
+
+class TCP(Layer):
 	FIN = 0x01
 	SYN = 0x02
 	RST = 0x04
@@ -15,18 +17,20 @@ class TCP:
 	#CWR = 0x80
 	#NS  = 0x100
 
+	IP_PROTO = 0x06
 
-	def __init__(self):
-		self.src = 0
-		self.dst = 0
-		self.syn = 0
-		self.ack = 0
-		self.hlen = 5
-		self.flags = 0
-		self.window = 65535
-		self.crc = 0
-		self.urgent = 0
-		self.opts = ''
+	FIELDS = (
+		('src',    0),
+		('dst',    0),
+		('syn',    0),    # sequence number
+		('ack',    0),
+		('hlen',   None), # 32-bit words, from opts
+		('flags',  0),
+		('window', 65535),
+		('crc',    None), # needs an enclosing IP layer, otherwise 0
+		('urgent', 0),
+		('opts',   b''),
+	)
 
 	def randomize(self):
 		self.src = randrange(65536)
@@ -50,31 +54,36 @@ class TCP:
 
 		self.hlen = (self.hlen & 0xf0) >> 4
 		self.flags = self.flags & 0x3f
-		self.opts = pkt[20:(self.hlen * 4)-20]
+		self.opts = pkt[20:self.hlen * 4]
 
 		return pkt[self.hlen * 4:]
 
-	#def calculate_size(self):
-	#	self.hlen = 5 + len(self.opts) / 4
+	def build(self, data, outer):
+		opts = self.opts
+		hlen = self.hlen
+		if hlen is None:
+			opts += b'\x00' * (-len(opts) % 4)
+			hlen = 5 + len(opts) // 4
 
-	def pack(self, data=''):
-		self.len = (self.hlen * 4) + len(data)
-		pkt = struct.pack(
+		def header(crc):
+			return struct.pack(
 					'!HHIIBBHHH',
 					self.src,
 					self.dst,
 					self.syn,
 					self.ack,
-					(self.hlen << 4),
+					(hlen << 4),
 					self.flags,
 					self.window,
-					self.crc,
+					crc,
 					self.urgent
-					)
-		return pkt + self.opts + data
+					) + opts
 
-	def __repr__(self):
-		r = []
-		r.append('%s' % self.dst)
-		r.append('%s' % self.src)
-		return ' '.join(r)
+		crc = self.crc
+		if crc is None:
+			crc = 0
+			if hasattr(outer, 'pseudo_header'):
+				segment = header(0) + data
+				crc = checksum(outer.pseudo_header(TCP.IP_PROTO, len(segment)) + segment)
+
+		return header(crc) + data

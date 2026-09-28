@@ -3,7 +3,9 @@ import socket
 import struct
 from random import randrange
 
-class ARP:
+from .layer import Layer, mac
+
+class ARP(Layer):
 	PROTOS = {
 		0x0001 : 'ETH',
 		0x0800 : 'IP',
@@ -16,21 +18,25 @@ class ARP:
 		0x0004 : 'RARP REPLY',
 	}
 
-	def __init__(self):
-		self.hw = 0x0001
-		self.proto = 0x0800
-		self.hwsize = 6
-		self.protosize = 4
-		self.op = 0
-		self.src_mac = '\x00\x00\x00\x00\x00\x00'
-		self.src_ip = '0.0.0.0'
-		self.dst_mac = '\xff\xff\xff\xff\xff\xff'
-		self.dst_ip = '255.255.255.255'
+	ETHERTYPE = 0x0806
+
+	FIELDS = (
+		('hw',        0x0001),
+		('proto',     0x0800),
+		('hwsize',    6),
+		('protosize', 4),
+		('op',        0),
+		('src_mac',   b'\x00\x00\x00\x00\x00\x00'),
+		('src_ip',    '0.0.0.0'),
+		('dst_mac',   b'\xff\xff\xff\xff\xff\xff'),
+		('dst_ip',    '255.255.255.255'),
+	)
+	MAC_FIELDS = ('src_mac', 'dst_mac')
 
 	def randomize(self):
-		self.src_mac = ''.join(chr(randrange(256)) for x in range(6))
+		self.src_mac = bytes(randrange(256) for x in range(6))
 		self.src_ip = '.'.join(str(randrange(256)) for x in range(4))
-		self.dst_mac = '\xff\xff\xff\xff\xff\xff'
+		self.dst_mac = b'\xff\xff\xff\xff\xff\xff'
 		self.dst_ip = '255.255.255.255'
 
 	def unpack(self, pkt):
@@ -50,7 +56,7 @@ class ARP:
 
 		return pkt[28:]
 
-	def pack(self, data=''):
+	def build(self, data, outer):
 		return struct.pack(
 					'!HHBBH6s4s6s4s',
 					self.hw,
@@ -58,21 +64,13 @@ class ARP:
 					self.hwsize,
 					self.protosize,
 					self.op,
-					self.src_mac,
+					mac(self.src_mac),
 					socket.inet_aton(self.src_ip),
-					self.dst_mac,
+					mac(self.dst_mac),
 					socket.inet_aton(self.dst_ip)
 					) + data
 
-	def __repr__(self):
-		r = []
-		r.append(':'.join('%.2x' % ord(o) for o in self.dst_mac))
-		r.append(' / ')
-		r.append('.'.join('%d' % ord(o) for o in self.dst_ip))
-		r.append(' ')
-		r.append(':'.join('%.2x' % ord(o) for o in self.src_mac))
-		r.append(' / ')
-		r.append('.'.join('%d' % ord(o) for o in self.src_ip))
-		r.append(' ')
-		r.append('0x%.4x (%s)' % (self.op, ARP.OPS[self.op]))
-		return ''.join(r)
+	def _fmt(self, name, value):
+		if 'op' == name:
+			return '0x%.4x (%s)' % (value, ARP.OPS.get(value, 'unknown'))
+		return Layer._fmt(self, name, value)

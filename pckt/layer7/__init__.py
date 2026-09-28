@@ -1,2 +1,2 @@
 
-from .dhcp import DHCP_Request
+from .dhcp import DHCP, DHCP_Request
