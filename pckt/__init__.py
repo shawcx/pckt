@@ -1,6 +1,7 @@
+import logging
 import os
 
-from .layer import Layer, checksum
+from .layer import Layer, checksum, mac
 
 from .ethernet import Ethernet
 from .vlan     import VLAN
@@ -16,6 +17,9 @@ from .udp  import UDP
 
 from .layer7 import DHCP, DHCP_Request
 
+# library code logs; leave output to the application
+logging.getLogger(__name__).addHandler(logging.NullHandler())
+
 def _parse():
     manuf = {}
     with open(os.path.join(os.path.dirname(__file__), 'manuf'), 'r', encoding='utf-8') as f:
@@ -28,3 +32,7 @@ def _parse():
     return manuf
 
 manuf = _parse()
+
+def vendor(addr):
+    '''vendor name for a MAC address (bytes or 'aa:bb:..' string), or None'''
+    return manuf.get(':'.join('%.2X' % o for o in mac(addr)[:3]))

@@ -18,6 +18,9 @@ class ARP(Layer):
         0x0004 : 'RARP REPLY',
     }
 
+    REQUEST = 0x0001
+    REPLY   = 0x0002
+
     ETHERTYPE = 0x0806
 
     FIELDS = (

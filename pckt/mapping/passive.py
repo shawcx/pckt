@@ -1,132 +1,121 @@
+#!/usr/bin/env python3
+'''
+Passively map hosts on the local network from ARP and DHCP traffic.
 
-import os
-import subprocess as subp
+    sudo python3 -m pckt.mapping.passive eth0
+    python3 -m pckt.mapping.passive --file capture.pcap
 
-import pypcap
-import packetio
+Plain IP traffic isn't used: routed packets carry the router's MAC with the
+remote host's address.
+'''
 
-#interfaces = pypcap.find()
-#list(interfaces.keys())
+import argparse
+import socket
+import struct
 
-if False:
-    def next_win32(self):
-        if subp.WAIT_OBJECT_0 != subp.WaitForSingleObject(self.pd.getevent(), 1000):
+from pckt import pcap, vendor, Ethernet, ARP, DHCP
+
+UNSPECIFIED = '0.0.0.0'
+
+
+class PassiveMapper:
+    def __init__(self):
+        # 'aa:bb:cc:dd:ee:ff' => {'mac', 'vendor', 'ip', 'name', 'os'}
+        self.hosts = {}
+
+    def process(self, data):
+        '''update hosts from one ethernet frame; returns the host if it changed, else None'''
+        try:
+            pkt = Ethernet.decode(data)
+        except struct.error:
             return None
-        return self.pd.next()
 
-    def next_linux(self):
-        if beaker.skt.timeout(self.pd, 1.0):
+        if ARP in pkt:
+            (addr, fields) = self.from_arp(pkt[ARP])
+        elif DHCP in pkt:
+            (addr, fields) = self.from_dhcp(pkt[DHCP])
+        else:
             return None
-        return self.pd.next()
 
-    def next_file(self):
-        return self.pd.next()
+        if addr is None or not fields:
+            return None
 
-    def run(self):
-        if pypcap.version().startswith('WinPcap'):
-            self.next = self.next_win32
-        else:
-            self.next = self.next_linux
+        key = ':'.join('%.2x' % o for o in addr)
+        host = self.hosts.setdefault(key, {'mac': key, 'vendor': vendor(addr)})
+        if all(host.get(name) == value for (name, value) in fields.items()):
+            return None
+        host.update(fields)
+        return host
 
-        if self.interface.startswith('file:'):
-            self.next = self.next_file
-            try:
-                self.pd = pypcap.open_file(self.interface[5:])
-            except:
-                logging.warning('Could not open file %s', repr(self.interface))
-                return False
-        else:
-            try:
-                self.pd = pypcap.open_live(self.interface)
-            except:
-                logging.warning('Could not open interface %s', repr(self.interface))
-                return False
+    def from_arp(self, arp):
+        # probes use 0.0.0.0 while checking an address is free
+        if UNSPECIFIED == arp.src_ip:
+            return (None, None)
+        return (arp.src_mac, {'ip': arp.src_ip})
 
-        while not self.should_stop():
-            try:
-                packet = self.next()
-            except:
-                loggin.error('Error reading from PCAP')
-                self.stop()
-                continue
+    def from_dhcp(self, msg):
+        if DHCP.BOOTREQUEST != msg.type:
+            return (None, None)
 
-            if None == packet:
-                continue
+        fields = {}
 
-            ethernet = packetio.Ethernet()
-            length = ethernet.unpack(packet)
+        requested = msg.option(DHCP.REQUESTED_IP)
+        if requested and 4 == len(requested):
+            fields['ip'] = socket.inet_ntoa(requested)
+        elif UNSPECIFIED != msg.clientip:
+            fields['ip'] = msg.clientip
 
-            packet = packet[length:]
-
-            fields = {}
-
-            fields['mac'] = ':'.join('%.2X' % d for d in ethernet.src)
-
-            #print('-----------------------------')
-            #print(fields)
-            #print('%.4X' % ethernet.proto)
-
-            if ethernet.ETHERNET_IP == ethernet.proto:
-                self.ParseIP(packet, fields)
-            elif ethernet.ETHERNET_ARP == ethernet.proto:
-                #print('ARP ---------------------')
-                #hexdump(packet)
-                self.ParseARP(packet, fields)
-
-            if 'ip' not in fields:
-                continue
-
-            if '0' == fields['ip'][0]:
-                continue
-
-            self.queue.put('HOST:' + ' '.join('%s="%s"' % p for p in fields.items()))
-
-    def ParseARP(self, packet, fields):
-        arp = packetio.ARP()
-        length = arp.unpack(packet)
-        fields['mac'] = ':'.join('%.2X' % d for d in arp.src_mac)
-        fields['ip']  = '.'.join('%d'   % d for d in arp.src_ip)
-
-    def ParseIP(self, packet, fields):
-        ip = packetio.IP()
-        length = ip.unpack(packet)
-        packet = packet[length:]
-
-        fields['ip'] = '.'.join('%d' % d for d in ip.src)
-
-        if ip.IP_UDP == ip.proto:
-            self.ParseUDP(packet, fields)
-
-    def ParseUDP(self, packet, fields):
-        udp = packetio.UDP()
-        length = udp.unpack(packet)
-        packet = packet[length:]
-
-        if udp.src == 68 and udp.dst == 67:
-            self.ParseDHCP(packet, fields)
-
-    def ParseDHCP(self, packet, fields):
-        fields['mac'] = ':'.join('%.2X' % d for d in packet[28:34])
-
-        packet = packet[240:]
+        name = msg.option(DHCP.HOSTNAME)
+        if name:
+            fields['name'] = name.decode('ascii', 'replace')
 
         # TODO: stop assuming all microsoft dhcp clients send MSFT in option 60
-        #fields['os'] = 'linux'
+        if (msg.option(DHCP.VENDOR_CLASS) or b'').startswith(b'MSFT'):
+            fields['os'] = 'windows'
 
+        return (msg.clientmac, fields)
+
+
+def describe(host):
+    return '%s  %-15s %-20s %-8s %s' % (
+        host['mac'],
+        host.get('ip', ''),
+        host.get('name', ''),
+        host.get('os', ''),
+        host.get('vendor') or '',
+        )
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Passively map hosts from ARP and DHCP traffic.')
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('device', nargs='?', help='capture device')
+    source.add_argument('--file', help='read a pcap file instead')
+    args = parser.parse_args()
+
+    if args.file:
+        pd = pcap.open_offline(args.file)
+    else:
+        # a short timeout so next() returns regularly and Ctrl-C works
+        pd = pcap.open_live(args.device, 65535, True, 100)
+    pd.setfilter('arp or (udp and (port 67 or port 68))')
+
+    mapper = PassiveMapper()
+    try:
         while True:
-            if not packet or packet[0] == 0xff:
-                break
-            option = packet[0]
-            length = packet[1]
-            value = packet[2:2+length]
+            result = pd.next()
+            if result is None:
+                if args.file:
+                    break
+                continue
+            host = mapper.process(result[0])
+            if host:
+                print(describe(host))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        pd.close()
 
-            if 50 == option:
-                fields['ip'] = '.'.join('%d' % d for d in value)
-            elif 12 == option:
-                fields['name'] = value.decode('ascii', 'replace')
-            elif 60 == option:
-                if value.startswith(b'MSFT'):
-                    fields['os'] = 'windows'
 
-            #print(option, repr(value))
-            packet = packet[2+length:]
+if '__main__' == __name__:
+    main()

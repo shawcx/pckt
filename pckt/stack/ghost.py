@@ -1,197 +1,157 @@
 #!/usr/bin/env python3
+'''
+Pretend to be a host on the local network: answer ARP and ping for an IPv4
+address that is either given or leased from a DHCP server.
 
-import sys
-import time
+    sudo python3 -m pckt.stack.ghost               # list devices
+    sudo python3 -m pckt.stack.ghost eth0 [--mac 02:00:00:00:00:01] [--ip 10.0.0.66]
+'''
+
+import argparse
+import logging
 import random
 import socket
+import struct
 
-try:
-    import pypcap
-except:
-    print('Missing module: pypcap')
-    sys.exit(-1)
+from pckt import pcap, mac, Ethernet, ARP, IP, ICMP, ICMP_EchoRequest, ICMP_EchoReply, UDP, DHCP
 
-import pckt
+BROADCAST = b'\xff' * 6
+
+log = logging.getLogger(__name__)
 
 
-class GhostAdapter:
-    @staticmethod
-    def GetDevices():
-        return pypcap.find()
+def random_mac():
+    # locally administered unicast
+    return bytes([0x02] + [random.randrange(256) for x in range(5)])
 
-    def __init__(self, dev, settings=None):
-        self.device = dev
 
-        if settings:
-            # split on ':', convert string to integer to byte and join
-            self.mac  = bytes(int(o,16) for o in settings['mac'].split(':', 6))
-            #self.ip   = socket.inet_aton(settings['ip'])
-            #self.mask = socket.inet_aton(settings['netmask'])
-            self.ip   = settings['ip']
-            self.mask = settings['netmask']
-            print(settings)
-            action = self.Loop
-        else:
-            self.mac  = b'\x22\x33\x44\x55\x66\x77'
-            self.ip   = '0.0.0.0'
-            self.mask = '255.255.255.255'
-            action = self.DHCP
+class Ghost:
+    def __init__(self, pd, mac, ip=None):
+        '''pd is an open pcap handle (anything with next/sendpacket/close)'''
+        self.pd = pd
+        self.mac = mac
+        self.ip = ip
+        self.xid = random.randrange(2**32)
+        self.requested = False
 
-        self.pd = pypcap.open_live(self.device, 2048, False, 100)
+    def run(self):
+        if self.ip is None:
+            self.dhcp(DHCP.DISCOVER)
 
-        # only capture in bound packets; does nothing on windows
-        self.pd.setdirection(pypcap.D_IN)
+        # next() returns on the capture timeout, so Ctrl-C is handled promptly
+        try:
+            while True:
+                result = self.pd.next()
+                if result:
+                    self.inbound(result[0])
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self.pd.close()
 
-        # for windows, ignore when our mac addr is the src
-        #self.pd.setfilter('ether src not ' + settings['mac'])
+    def send(self, pkt):
+        log.info('> %r', pkt)
+        self.pd.sendpacket(pkt.pack())
 
-        # pre-allocate some classes
-        self.ethout = pckt.ethernet()
-        self.arpin  = pckt.arp()
-        self.arpout = pckt.arp()
-        self.ipin   = pckt.ip()
-        self.ipout  = pckt.ip()
-        self.icmpin = pckt.icmp()
+    def inbound(self, data):
+        try:
+            pkt = Ethernet.decode(data)
+        except struct.error:
+            return
 
-        self.udpin  = pckt.udp()
-        self.udpout = pckt.udp()
+        if pkt.dst not in (self.mac, BROADCAST):
+            return
 
-        # call DHCP or Loop
-        action()
+        if ARP in pkt:
+            self.on_arp(pkt[ARP])
+        elif DHCP in pkt:
+            self.on_dhcp(pkt[DHCP])
+        elif ICMP_EchoRequest in pkt:
+            self.on_ping(pkt)
 
-    def DHCP(self):
-        self.ethout.dst = b'\xff\xff\xff\xff\xff\xff'
-        self.ethout.src = self.mac
-        self.ethout.proto = pckt.ETHERNET_IP
+    def on_arp(self, arp):
+        if ARP.REQUEST == arp.op and self.ip is not None and arp.dst_ip == self.ip:
+            log.info('< %r', arp)
+            self.send(
+                Ethernet(dst=arp.src_mac, src=self.mac) /
+                ARP(op=ARP.REPLY, src_mac=self.mac, src_ip=self.ip, dst_mac=arp.src_mac, dst_ip=arp.src_ip)
+                )
 
-        self.ipout.src = '0.0.0.0'
-        self.ipout.dst = '255.255.255.255'
-        self.ipout.proto = pckt.IP_UDP
+    def on_ping(self, pkt):
+        (ip, echo) = (pkt[IP], pkt[ICMP])
+        if ip.dst != self.ip:
+            return
+        log.info('< %r', ip)
+        reply = Ethernet(dst=pkt.src, src=self.mac) / IP(src=self.ip, dst=ip.src) / ICMP_EchoReply(id=echo.id, seq=echo.seq)
+        if echo.payload is not None:
+            reply = reply / echo.payload
+        self.send(reply)
 
-        self.udpout.src = 68
-        self.udpout.dst = 67
+    def dhcp(self, message_type, offer=None):
+        options = [(DHCP.MESSAGE_TYPE, bytes([message_type]))]
+        if offer is not None:
+            options.append((DHCP.REQUESTED_IP, socket.inet_aton(offer.yourip)))
+            server = offer.option(DHCP.SERVER_ID)
+            if server:
+                options.append((DHCP.SERVER_ID, server))
+        options.append((DHCP.PARAMETER_LIST, bytes([DHCP.SUBNET_MASK, DHCP.ROUTER, DHCP.DNS])))
 
-        dhcp = pckt.layer7.DHCP_Request()
-        dhcp.clientmac = self.mac
+        # ask for broadcast replies since this address isn't known to anyone yet
+        self.send(
+            Ethernet(dst=BROADCAST, src=self.mac) /
+            IP(src='0.0.0.0', dst='255.255.255.255') /
+            UDP() /
+            DHCP(transid=self.xid, clientmac=self.mac, bootpflags=0x8000, options=options)
+            )
 
-        dhcp.pack()
+    def on_dhcp(self, msg):
+        if DHCP.BOOTREPLY != msg.type or self.xid != msg.transid:
+            return
 
-        pkt = dhcp.pack()
+        log.info('< %r', msg)
+        kind = msg.option(DHCP.MESSAGE_TYPE, b'\x00')[0]
 
-        print(repr(pkt))
+        if DHCP.OFFER == kind and not self.requested:
+            self.requested = True
+            self.dhcp(DHCP.REQUEST, msg)
+        elif DHCP.ACK == kind and self.requested:
+            self.ip = msg.yourip
+            log.warning('bound to %s', self.ip)
+        elif DHCP.NAK == kind:
+            log.warning('DHCP NAK, starting over')
+            self.requested = False
+            self.xid = random.randrange(2**32)
+            self.dhcp(DHCP.DISCOVER)
 
-        pkt = self.udpout.pack(pkt)
-        pkt = self.ipout.pack(pkt)
-        pkt = self.ethout.pack(pkt)
 
-        self.Outbound(pkt)
+def main():
+    parser = argparse.ArgumentParser(description='Answer ARP and ping as a fake host.')
+    parser.add_argument('device', nargs='?', help='capture device; lists devices when omitted')
+    parser.add_argument('--mac', help='default: random locally administered address')
+    parser.add_argument('--ip', help='default: lease one with DHCP')
+    parser.add_argument('-q', '--quiet', action='store_true', help='only log address changes')
+    args = parser.parse_args()
 
-        self.Loop()
+    logging.basicConfig(level=logging.WARNING if args.quiet else logging.INFO, format='%(message)s')
 
-    def Loop(self):
-        self.pd.loop(self.Inbound)
-        self.pd.close()
+    devices = pcap.findalldevs()
 
-    def Outbound(self, pkt):
-        print('Sending')
-        self.pd.inject(pkt)
+    if args.device is None:
+        for (name, info) in sorted(devices.items()):
+            addr = ':'.join('%.2x' % o for o in info.get('mac', b''))
+            print(' %-16s %-17s %s' % (name, addr, info.get('ip', '')))
+        return
 
-    def Inbound(self, pkt):
-        pkt = pckt.ethernet(pkt)
+    if args.device not in devices:
+        parser.error('unknown device: %s' % args.device)
 
-        # make assumptions about return packets
-        self.ethout.dst  = pkt.src
-        self.ethout.src  = self.mac
-        self.ethout.type = pkt.type
+    # a short timeout so next() returns regularly
+    pd = pcap.open_live(args.device, 65535, True, 100)
+    # only capture inbound packets; does nothing on windows
+    pd.setdirection(pcap.D_IN)
 
-        if 0x0800 == pkt.type:
-            self.HandleIP(pkt.ip)
-        elif 0x0806 == pkt.type:
-            self.HandleARP(pkt)
-
-    def HandleIP(self, pkt):
-        self.ipout.dst   = pkt.src
-        self.ipout.src   = self.ip
-        self.ipout.proto = pkt.proto
-
-        if 1 == pkt.proto:
-            self.HandleICMP(pkt.layer4)
-        elif 6 == pkt.proto:
-            self.HandleTCP(pkt.layer4)
-        elif 17 == pkt.proto:
-            self.HandleUDP(pkt.layer4)
-        else:
-            print('Unknown proto:', pkt.proto)
-
-    def HandleTCP(self, pkt):
-        #print 'TCP'
-        pass
-
-    def HandleUDP(self, pkt):
-        #print 'UDP'
-        pass
-
-    def HandleICMP(self, pkt):
-        if 0 == pkt.type:
-            icmp = pckt.ICMP_EchoReply(self.icmpin)
-        elif 8 == pkt.type:
-            icmp = pckt.ICMP_EchoRequest(self.icmpin)
-            resp = pckt.ICMP_EchoReply(icmp)
-            resp.type = 0
-            #print icmp, resp
-
-            self.Outbound(self.ethout.pack(self.ipout.pack(resp.pack(pkt))))
-        else:
-            print('Unknown ICMP:', self.icmpin)
-
-    def HandleARP(self, pkt):
-        pkt = self.arpin.unpack(pkt)
-
-        # ARP REQUEST
-        if 0x0001 == self.arpin.op:
-            if self.arpin.dst_ip == self.ip:
-                # constrcut REPLY
-                self.arpout = pckt.arp()
-                self.arpout.op = 0x0002
-                self.arpout.dst_mac = self.arpin.src_mac
-                self.arpout.dst_ip  = self.arpin.src_ip
-                self.arpout.src_mac = self.mac
-                self.arpout.src_ip  = self.ip
-
-                print(self.ethout)
-                print(self.arpout)
-
-                self.Outbound(self.ethout.pack(self.arpout.pack()))
+    Ghost(pd, mac(args.mac) if args.mac else random_mac(), args.ip).run()
 
 
 if '__main__' == __name__:
-    devices = GhostAdapter.GetDevices()
-
-    if 1 == len(sys.argv):
-        print(' Usage:', sys.argv[0], '<adapter>')
-        print()
-        print(' Devices ')
-        print('=' * 40)
-        for device in devices:
-            mac = pypcap.mac(device)
-            mac = ':'.join('%.2x' % o for o in mac)
-            print(' %-8s|' % (device), mac, devices[device].get('ip', ''))
-        print()
-        sys.exit(0)
-
-    device = sys.argv[1]
-
-    if device not in devices:
-        print('Error: invalid device: %s' % device)
-        sys.exit(-1)
-
-    if True:
-        settings = {
-            'mac'     : '00:22:44:66:88:aa',
-            'ip'      : '10.25.0.66',
-            'netmask' : '255.255.255.0',
-            }
-    else:
-        settings = None
-
-    ghost = GhostAdapter(device, settings)
+    main()
