@@ -1,0 +1,41 @@
+# Build the pcap extension and run the unit tests on the oldest supported
+# Python and the newest, then check that the sdist installs and works outside
+# the source tree.
+#
+# test_live.py needs unprivileged user namespaces, which the default Docker
+# seccomp profile blocks, so on a Docker runner it's reported as skipped.
+
+stages:
+  - test
+  - build
+
+test:
+  stage: test
+  image: python:$PYTHON
+  parallel:
+    matrix:
+      - PYTHON: ["3.8", "3.14"]
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends libpcap-dev iproute2 iputils-ping dnsmasq >/dev/null
+    - pip install -q setuptools
+  script:
+    - python setup.py build_ext --inplace
+    # the pcap tests skip rather than fail without the extension, so check it imports
+    - python -c 'from pckt import pcap; print(pcap.lib_version())'
+    - PYTHONPATH=. python -m unittest discover -s test -v
+
+sdist:
+  stage: build
+  image: python:3.14
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends libpcap-dev >/dev/null
+  script:
+    - pip install -q build
+    - python -m build --sdist
+    - pip install dist/*.tar.gz
+    - cd / && python -c 'import pckt; from pckt import pcap; assert pckt.vendor("00:50:56:00:00:01"), "manuf missing"'
+  artifacts:
+    paths:
+      - dist/
