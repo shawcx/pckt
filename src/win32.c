@@ -32,21 +32,23 @@ static PyObject * PyPCAP_getevent(PyPCAP *self) {
 
 #define CANONICALPATH "SYSTEM\\CurrentControlSet\\Control\\Network\\{4D36E972-E325-11CE-BFC1-08002BE10318}"
 
-PyObject * device_to_canonical(char *guid) {
+// the connection name for the {GUID} part of an NPF device name, or NULL
+static PyObject * device_to_canonical(const char *guid) {
     PyObject *name = NULL;
     HKEY hkey;
+    char path[MAX_PATH];
     char value[MAX_PATH];
     DWORD len;
 
-    sprintf(value, CANONICALPATH "\\%s\\Connection", guid);
+    snprintf(path, sizeof(path), CANONICALPATH "\\%s\\Connection", guid);
 
-    if(ERROR_SUCCESS != RegOpenKeyEx(HKEY_LOCAL_MACHINE, value, 0, KEY_QUERY_VALUE, &hkey)) {
+    if(ERROR_SUCCESS != RegOpenKeyEx(HKEY_LOCAL_MACHINE, path, 0, KEY_QUERY_VALUE, &hkey)) {
         return NULL;
     }
 
-    len = MAX_PATH;
+    len = sizeof(value);
 
-    if(ERROR_SUCCESS == RegQueryValueEx(hkey, "Name", NULL, NULL, value, &len)) {
+    if(ERROR_SUCCESS == RegQueryValueEx(hkey, "Name", NULL, NULL, (LPBYTE)value, &len)) {
         name = PyUnicode_FromString(value);
     }
 
@@ -55,12 +57,13 @@ PyObject * device_to_canonical(char *guid) {
     return name;
 }
 
-int canonical_to_device(char *name, char *device) {
+// fills device (MAX_PATH) with the NPF device name for a connection name; -1 if there's none
+static int canonical_to_device(const char *name, char *device) {
     HKEY base;
     HKEY connection;
-    HRESULT hr;
+    LONG hr;
     char path[MAX_PATH];
-    char cannon[MAX_PATH];
+    char canon[MAX_PATH];
     char guid[MAX_PATH];
     int idx;
     DWORD len;
@@ -70,7 +73,7 @@ int canonical_to_device(char *name, char *device) {
     }
 
     for(idx = 0; ; ++idx) {
-        len = MAX_PATH;
+        len = sizeof(guid);
 
         hr = RegEnumKeyEx(base, idx, guid, &len, NULL, NULL, NULL, NULL);
         if(ERROR_SUCCESS != hr && ERROR_MORE_DATA != hr) {
@@ -80,24 +83,22 @@ int canonical_to_device(char *name, char *device) {
             continue;
         }
 
-        sprintf(path, "%s\\Connection", guid);
+        snprintf(path, sizeof(path), "%s\\Connection", guid);
 
-        hr = RegOpenKeyEx(base, path, 0, KEY_QUERY_VALUE, &hkey_connection);
-        if(ERROR_SUCESS != hr) {
-            break;
+        if(ERROR_SUCCESS != RegOpenKeyEx(base, path, 0, KEY_QUERY_VALUE, &connection)) {
+            continue;
         }
 
-        len = MAX_PATH;
+        len = sizeof(canon);
 
-        hr = RegQueryValueEx(connection, "Name", NULL, NULL, (LPBYTE)cannon, &len);
-        if(ERROR_SUCESS != hr) {
-            break;
-        }
-
+        hr = RegQueryValueEx(connection, "Name", NULL, NULL, (LPBYTE)canon, &len);
         RegCloseKey(connection);
+        if(ERROR_SUCCESS != hr) {
+            continue;
+        }
 
-        if(!stricmp(cannon, name)) {
-            sprintf(device, "\\Device\\NPF_%s", guid);
+        if(!_stricmp(canon, name)) {
+            snprintf(device, MAX_PATH, NPF_PREFIX "%s", guid);
             RegCloseKey(base);
             return 0;
         }

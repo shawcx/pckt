@@ -7,12 +7,22 @@
 
 #include <pcap/pcap.h>
 
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+
 #ifndef WIN32
  #include <sys/socket.h>
  #include <netinet/in.h>
  #include <arpa/inet.h>
  #include <sys/ioctl.h>
  #include <net/if.h>
+ #include <unistd.h>
+ #ifdef __APPLE__
+  #include <sys/sysctl.h>
+  #include <net/route.h>
+  #include <net/if_dl.h>
+ #endif
  
  typedef unsigned char  BYTE;
  typedef unsigned short WORD;
@@ -26,7 +36,9 @@ PyMODINIT_FUNC PyInit_pcap(void);
 
 static PyObject * PyPCAP_lib_version  ( PyObject * self );
 static PyObject * PyPCAP_findalldevs  ( PyObject * self );
+static PyObject * PyPCAP_mac          ( PyObject * self, PyObject * args );
 static PyObject * PyPCAP_open_live    ( PyObject * self, PyObject * args );
+static PyObject * PyPCAP_create       ( PyObject * self, PyObject * args );
 static PyObject * PyPCAP_open_offline ( PyObject * self, PyObject * args );
 
 // C callback that executes the Python callback
@@ -34,7 +46,9 @@ static void pcap_callback ( u_char * user, const struct pcap_pkthdr * hdr, const
 
 #ifdef WIN32
 // helper functions for nice device names on windows
-PyObject * device_to_canonical ( char * guid );
+#define NPF_PREFIX "\\Device\\NPF_"
+static PyObject * device_to_canonical ( const char * guid );
+static int        canonical_to_device ( const char * name, char * device );
 #endif // WIN32
 
 // Python Exception
@@ -45,10 +59,16 @@ static PyMethodDef PyPCAP_module_methods[] = {
 	  "lib_version() => return pcap library version" },
 
 	{ "findalldevs",  (PyCFunction)PyPCAP_findalldevs,  METH_NOARGS,
-	  "findalldevs() => return dictionary of interfaces" },
+	  "findalldevs() => {device: {'mac', 'ip', 'netmask', 'broadcast'}}, with whichever are known" },
+
+	{ "mac",          (PyCFunction)PyPCAP_mac,          METH_O,
+	  "mac(device) => the interface's 6-byte hardware address" },
 
 	{ "open_live",    (PyCFunction)PyPCAP_open_live,    METH_VARARGS,
 	  "open_live(device, [snaplen=65535], [promisc=True], [timeout_ms=0]) => handle" },
+
+	{ "create",       (PyCFunction)PyPCAP_create,       METH_O,
+	  "create(device) => handle to configure with the set_*() methods, then activate()" },
 
 	{ "open_offline", (PyCFunction)PyPCAP_open_offline, METH_O,
 	  "open_offline(filename) => handle" },
@@ -78,6 +98,12 @@ void       PyPCAP_Type_dealloc ( PyPCAP * self );
 PyObject * PyPCAP_Type_new     ( PyTypeObject * type, PyObject * args, PyObject * kwds );
 int        PyPCAP_Type_init    ( PyPCAP * self, PyObject * args, PyObject * kwds );
 
+static PyObject * PyPCAP_activate           ( PyPCAP * self );
+static PyObject * PyPCAP_set_snaplen        ( PyPCAP * self, PyObject * args );
+static PyObject * PyPCAP_set_promisc        ( PyPCAP * self, PyObject * args );
+static PyObject * PyPCAP_set_timeout        ( PyPCAP * self, PyObject * args );
+static PyObject * PyPCAP_set_immediate_mode ( PyPCAP * self, PyObject * args );
+static PyObject * PyPCAP_geterr         ( PyPCAP * self );
 static PyObject * PyPCAP_list_datalinks ( PyPCAP * self );
 static PyObject * PyPCAP_datalink       ( PyPCAP * self );
 static PyObject * PyPCAP_setdirection   ( PyPCAP * self, PyObject * args );
@@ -103,6 +129,18 @@ static PyObject * PyPCAP_getevent       ( PyPCAP * self );
 #endif // WIN32
 
 static PyMethodDef PyPCAP_Type_methods[] = {
+	{ "activate",           (PyCFunction)PyPCAP_activate,           METH_NOARGS,
+	  "activate() => None, or a warning string; starts a handle from create()" },
+	{ "set_snaplen",        (PyCFunction)PyPCAP_set_snaplen,        METH_O,
+	  "set_snaplen(int), before activate()" },
+	{ "set_promisc",        (PyCFunction)PyPCAP_set_promisc,        METH_O,
+	  "set_promisc(bool), before activate()" },
+	{ "set_timeout",        (PyCFunction)PyPCAP_set_timeout,        METH_O,
+	  "set_timeout(ms), before activate()" },
+	{ "set_immediate_mode", (PyCFunction)PyPCAP_set_immediate_mode, METH_O,
+	  "set_immediate_mode(bool), before activate(): deliver packets as they arrive rather than buffering" },
+	{ "geterr",         (PyCFunction)PyPCAP_geterr,         METH_NOARGS,
+	  "geterr() => libpcap's last error message for this handle" },
 	{ "list_datalinks", (PyCFunction)PyPCAP_list_datalinks, METH_NOARGS,
 	  "list_datalinks() => [(dlt, name, description), ...]" },
 	{ "datalink",       (PyCFunction)PyPCAP_datalink,       METH_NOARGS,

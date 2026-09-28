@@ -19,6 +19,11 @@ capture them with libpcap.
     pd.sendpacket(frame)
     pd.loop(lambda data, ts, wirelen: print(Ethernet.decode(data)))
 
+    # or set options before the capture starts
+    pd = pcap.create('eth0')
+    pd.set_immediate_mode(True)
+    pd.activate()
+
 Fields left unset are computed when packing; anything set explicitly is
 sent as-is, so malformed packets are easy to build on purpose.
 
