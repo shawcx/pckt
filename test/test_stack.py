@@ -175,7 +175,7 @@ class TestPassive(unittest.TestCase):
     def test_arp(self):
         mapper = PassiveMapper()
         host = mapper.process(arp_from(PEER_MAC, '10.0.0.7'))
-        self.assertEqual({'mac': '00:50:56:00:aa:bb', 'vendor': 'Vmware', 'ip': '10.0.0.7'}, host)
+        self.assertEqual({'mac': '00:50:56:00:aa:bb', 'vendor': 'VMware', 'ip': '10.0.0.7'}, host)
         # unchanged
         self.assertIsNone(mapper.process(arp_from(PEER_MAC, '10.0.0.7')))
         self.assertEqual('10.0.0.8', mapper.process(arp_from(PEER_MAC, '10.0.0.8'))['ip'])

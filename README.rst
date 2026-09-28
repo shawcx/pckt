@@ -37,6 +37,11 @@ Needs the libpcap headers (e.g. ``libpcap-dev``) and a C compiler::
 
     pip install .
 
+Debian package (``python3-pckt``, built as ``../python3-pckt_*.deb``)::
+
+    sudo apt build-dep .
+    dpkg-buildpackage -us -uc -b
+
 Tests::
 
     python3 setup.py build_ext --inplace

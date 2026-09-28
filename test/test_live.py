@@ -263,7 +263,7 @@ class TestLive(unittest.TestCase):
 
         # the mapper on the server side saw the kernel (ARP) and ghost (DHCP)
         lines = result['passive'].splitlines()
-        self.assertTrue(any(GHOST_MAC in l and result['ip'] in l and 'Vmware' in l for l in lines), lines)
+        self.assertTrue(any(GHOST_MAC in l and result['ip'] in l and 'VMware' in l for l in lines), lines)
         self.assertTrue(any('10.0.0.1 ' in l for l in lines), lines)
 
     @unittest.skipUnless(shutil.which('dnsmasq'), 'needs dnsmasq')

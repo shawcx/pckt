@@ -1,0 +1,13 @@
+#!/usr/bin/make -f
+
+export PYBUILD_NAME = pckt
+
+# run the tests against the freshly built extension: copy them next to the
+# built package, since test_live.py runs its children from the tests' parent
+# directory. test_live.py skips itself without namespaces, ip and ping.
+export PYBUILD_BEFORE_TEST = cp -r {dir}/test {build_dir}
+export PYBUILD_TEST_ARGS = -s test
+export PYBUILD_AFTER_TEST = rm -rf {build_dir}/test
+
+%:
+	dh $@ --buildsystem=pybuild

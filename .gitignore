@@ -4,3 +4,10 @@
 MANIFEST
 *.so
 *.egg-info
+/.pybuild
+/debian/.debhelper
+/debian/debhelper-build-stamp
+/debian/files
+/debian/python3-pckt
+/debian/*.substvars
+/debian/*.log

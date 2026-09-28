@@ -1,0 +1,27 @@
+Source: pckt
+Section: python
+Priority: optional
+Maintainer: Matthew Shaw <mshaw.cx@gmail.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-sequence-python3,
+ libpcap-dev,
+ pybuild-plugin-pyproject,
+ python3-all-dev,
+ python3-setuptools,
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+
+Package: python3-pckt
+Architecture: any
+Depends:
+ ${misc:Depends},
+ ${python3:Depends},
+ ${shlibs:Depends},
+Description: build, decode, send and capture network packets
+ pckt builds packets a layer at a time (Ethernet, VLAN, ARP, IPv4, IPv6,
+ ICMP, ICMPv6, TCP, UDP, DHCP and DNS), chains the layers into a frame, and
+ decodes frames back into layers. Lengths, checksums and protocol numbers
+ left unset are computed when packing.
+ .
+ It includes its own libpcap binding, pckt.pcap, for sending and capturing.

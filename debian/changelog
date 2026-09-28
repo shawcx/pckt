@@ -1,0 +1,5 @@
+pckt (0.1) UNRELEASED; urgency=medium
+
+  * Initial Debian packaging.
+
+ -- Matthew Shaw <mshaw.cx@gmail.com>  Mon, 28 Sep 2026 00:30:34 -0400
