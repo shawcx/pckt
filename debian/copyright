@@ -3,13 +3,14 @@ Upstream-Name: pckt
 Upstream-Contact: Matthew Shaw <mshaw.cx@gmail.com>
 
 Files: *
-Copyright: 2016-2017 Matthew Oertle <moertle@gmail.com>
-           2020-2026 Matthew Shaw <mshaw.cx@gmail.com>
+Copyright: 2016-2026 Matthew Shaw <mshaw.cx@gmail.com>
 License: MIT
 
 Files: pckt/manuf
-Copyright: 1998 Gerald Combs and the Wireshark contributors
-Comment: Wireshark's list of Ethernet vendor codes (OUIs), from the IEEE registries.
+Copyright: 1998-2026 Gerald Combs and the Wireshark contributors
+Comment: Wireshark's list of Ethernet vendor codes (OUI, MA-M and MA-S blocks),
+ generated from the IEEE registries with `tshark -G manuf` and downloaded from
+ https://www.wireshark.org/download/automated/data/manuf
 License: GPL-2+
 
 License: MIT
