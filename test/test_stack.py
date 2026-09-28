@@ -118,6 +118,34 @@ class TestGhost(unittest.TestCase):
         ghost.inbound(self.arp_request('10.0.0.50'))
         self.assertEqual('10.0.0.50', self.pd.sent[-1][ARP].src_ip)
 
+    def test_dhcp_retry(self):
+        ghost = self.ghost(ip=None)
+        ghost.dhcp(DHCP.DISCOVER)
+        ghost.inbound(self.server(ghost, DHCP.OFFER))
+        self.assertEqual(2, len(self.pd.sent))
+
+        # the ACK never arrives
+        ghost.tick(ghost.dhcp_sent + 1)
+        self.assertEqual(2, len(self.pd.sent))
+        ghost.tick(ghost.dhcp_sent + 10)
+        self.assertEqual(3, len(self.pd.sent))
+        self.assertEqual(bytes([DHCP.DISCOVER]), self.pd.sent[-1][DHCP].option(DHCP.MESSAGE_TYPE))
+
+        # a fresh offer is accepted again
+        ghost.inbound(self.server(ghost, DHCP.OFFER))
+        self.assertEqual(bytes([DHCP.REQUEST]), self.pd.sent[-1][DHCP].option(DHCP.MESSAGE_TYPE))
+        ghost.inbound(self.server(ghost, DHCP.ACK))
+        self.assertEqual('10.0.0.50', ghost.ip)
+
+        # bound: no more retries
+        ghost.tick(ghost.dhcp_sent + 100)
+        self.assertEqual(4, len(self.pd.sent))
+
+    def test_static_ip_no_dhcp(self):
+        ghost = self.ghost()
+        ghost.tick(10**9)
+        self.assertEqual([], self.pd.sent)
+
     def test_dhcp_nak(self):
         ghost = self.ghost(ip=None)
         ghost.dhcp(DHCP.DISCOVER)

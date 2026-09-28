@@ -12,12 +12,16 @@ import logging
 import random
 import socket
 import struct
+import time
 
 from pckt import pcap, mac, Ethernet, ARP, IP, ICMP, ICMP_EchoRequest, ICMP_EchoReply, UDP, DHCP
 
 BROADCAST = b'\xff' * 6
 
 log = logging.getLogger(__name__)
+
+# seconds to wait for a lease before starting DHCP over
+DHCP_RETRY = 10
 
 
 def random_mac():
@@ -33,6 +37,8 @@ class Ghost:
         self.ip = ip
         self.xid = random.randrange(2**32)
         self.requested = False
+        # when the last DHCP message was sent, while there is no lease
+        self.dhcp_sent = None
 
     def run(self):
         if self.ip is None:
@@ -44,10 +50,21 @@ class Ghost:
                 result = self.pd.next()
                 if result:
                     self.inbound(result[0])
+                self.tick()
         except KeyboardInterrupt:
             pass
         finally:
             self.pd.close()
+
+    def tick(self, now=None):
+        '''called regularly; retries DHCP until there is a lease'''
+        if self.ip is not None or self.dhcp_sent is None:
+            return
+        now = time.monotonic() if now is None else now
+        if now - self.dhcp_sent >= DHCP_RETRY:
+            log.warning('no DHCP lease yet, retrying')
+            self.requested = False
+            self.dhcp(DHCP.DISCOVER)
 
     def send(self, pkt):
         log.info('> %r', pkt)
@@ -95,6 +112,8 @@ class Ghost:
             if server:
                 options.append((DHCP.SERVER_ID, server))
         options.append((DHCP.PARAMETER_LIST, bytes([DHCP.SUBNET_MASK, DHCP.ROUTER, DHCP.DNS])))
+
+        self.dhcp_sent = time.monotonic()
 
         # ask for broadcast replies since this address isn't known to anyone yet
         self.send(

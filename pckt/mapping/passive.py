@@ -110,7 +110,7 @@ def main():
                 continue
             host = mapper.process(result[0])
             if host:
-                print(describe(host))
+                print(describe(host), flush=True)
     except KeyboardInterrupt:
         pass
     finally:
