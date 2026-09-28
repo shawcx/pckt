@@ -8,6 +8,8 @@ version = "0.1"
 description = "Packet construction and decoding, with libpcap bindings"
 readme = "README.rst"
 requires-python = ">=3.8"
+# the table form: the "MIT" expression form needs setuptools 77, newer than Debian/Ubuntu stable ship
+license = {text = "MIT"}
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: C",
