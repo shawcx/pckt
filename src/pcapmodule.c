@@ -1,14 +1,14 @@
-#include "pckt.h"
+#include "pcapmodule.h"
 
-static PyModuleDef pypcap_module = {
+static PyModuleDef pcap_module = {
     PyModuleDef_HEAD_INIT,
-    "pypcap",
+    "pckt.pcap",
     "PCAP Python wrapper",
     -1,
     PyPCAP_module_methods
 };
 
-PyMODINIT_FUNC PyInit_pypcap(void) {
+PyMODINIT_FUNC PyInit_pcap(void) {
     PyObject *mod;
     int ok;
 
@@ -17,14 +17,14 @@ PyMODINIT_FUNC PyInit_pypcap(void) {
         return NULL;
     }
 
-    mod = PyModule_Create(&pypcap_module);
+    mod = PyModule_Create(&pcap_module);
     if(NULL == mod) {
         return NULL;
     }
 
     Py_INCREF(&PyPCAP_Type);
 
-    PyPCAP_Error = PyErr_NewException("pypcap.error", NULL, NULL);
+    PyPCAP_Error = PyErr_NewException("pckt.pcap.error", NULL, NULL);
     Py_INCREF(PyPCAP_Error);
     PyModule_AddObject(mod, "error", PyPCAP_Error);
 
@@ -149,37 +149,10 @@ static PyObject * PyPCAP_findalldevs(PyObject *self) {
     return devdict;
 }
 
-static PyObject * PyPCAP_create(PyObject *self, PyObject *args) {
-    PyPCAP *pypcap;
-    const char *device;
-
-    device = PyUnicode_AsUTF8(args);
-    if(!device) {
-        return NULL;
-    }
-
-    // allocate a pcap object
-    pypcap = (PyPCAP *)PyObject_CallObject((PyObject *)&PyPCAP_Type, NULL);
-    if(!pypcap) {
-        PyErr_SetString(PyPCAP_Error, "Could not create new pypcap object");
-        return NULL;
-    }
-
-    // open the device
-    pypcap->pd = pcap_create(device, pypcap->errbuf);
-    if(!pypcap->pd) {
-        PyErr_SetString(PyPCAP_Error, pypcap->errbuf);
-        Py_DECREF(pypcap);
-        return NULL;
-    }
-
-    return (PyObject *)pypcap;
-}
-
 static PyObject * PyPCAP_open_live(PyObject *self, PyObject *args) {
     PyPCAP *pypcap;
     const char *device;
-    int snaplen = 68;
+    int snaplen = 65535;
     int promisc = 1;
     int to_ms = 0;
 
@@ -191,7 +164,7 @@ static PyObject * PyPCAP_open_live(PyObject *self, PyObject *args) {
     // allocate a pcap object
     pypcap = (PyPCAP *)PyObject_CallObject((PyObject *)&PyPCAP_Type, NULL);
     if(!pypcap) {
-        PyErr_SetString(PyPCAP_Error, "Could not create new pypcap object");
+        PyErr_SetString(PyPCAP_Error, "Could not create a pcap handle");
         return NULL;
     }
 
@@ -203,7 +176,7 @@ static PyObject * PyPCAP_open_live(PyObject *self, PyObject *args) {
         return NULL;
     }
 
-    strcpy(pypcap->device, device);
+    snprintf(pypcap->device, sizeof(pypcap->device), "%s", device);
 
 #ifdef WIN32
     pcap_setmintocopy(pypcap->pd, 14);
@@ -224,7 +197,7 @@ static PyObject * PyPCAP_open_offline(PyObject *self, PyObject *args) {
     // allocate an event object
     pypcap = (PyPCAP *)PyObject_CallObject((PyObject *)&PyPCAP_Type, NULL);
     if(!pypcap) {
-        PyErr_SetString(PyPCAP_Error, "Could not create new pypcap object");
+        PyErr_SetString(PyPCAP_Error, "Could not create a pcap handle");
         return NULL;
     }
 
@@ -239,24 +212,37 @@ static PyObject * PyPCAP_open_offline(PyObject *self, PyObject *args) {
     return (PyObject *)pypcap;
 }
 
-void pcap_callback(u_char *user, const struct pcap_pkthdr *hdr, const u_char *data) {
+#define TIMESTAMP(hdr) ((double)(hdr)->ts.tv_sec + (hdr)->ts.tv_usec / 1e6)
+
+// runs inside pcap_loop(), which is called with the GIL released
+static void pcap_callback(u_char *user, const struct pcap_pkthdr *hdr, const u_char *data) {
     PyPCAP *self = (PyPCAP *)user;
-    PyObject *args;
-    PyObject *retval;
+    PyGILState_STATE gil;
+    PyObject *head;
+    PyObject *args = NULL;
+    PyObject *retval = NULL;
 
-    args = Py_BuildValue("(y#kllO)", data, (Py_ssize_t)hdr->caplen, (unsigned long)hdr->len, (long)hdr->ts.tv_sec, (long)hdr->ts.tv_usec, self->cbargs);
-    if(!args) {
-        pcap_breakloop(self->pd);
-        return;
+    gil = PyGILState_Ensure();
+
+    head = Py_BuildValue("(y#dk)", data, (Py_ssize_t)hdr->caplen, TIMESTAMP(hdr), (unsigned long)hdr->len);
+    if(head) {
+        args = PySequence_Concat(head, self->cbargs);
+        Py_DECREF(head);
     }
 
-    retval = PyObject_CallObject(self->cb, args);
-    if(!retval) {
+    if(args) {
+        retval = PyObject_CallObject(self->cb, args);
+        Py_DECREF(args);
+    }
+
+    // an exception from the callback, or a pending signal (e.g. Ctrl-C), stops the loop
+    if(!retval || 0 > PyErr_CheckSignals()) {
         pcap_breakloop(self->pd);
     }
 
-    Py_DECREF(args);
     Py_XDECREF(retval);
+
+    PyGILState_Release(gil);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -352,11 +338,35 @@ static PyObject * PyPCAP_setdirection(PyPCAP *self, PyObject *args) {
 }
 
 static PyObject * PyPCAP_setnonblock(PyPCAP *self, PyObject *args) {
+    int nonblock;
+
+    PCAPCTX;
+
+    nonblock = PyObject_IsTrue(args);
+    if(0 > nonblock) {
+        return NULL;
+    }
+
+    if(PCAP_ERROR == pcap_setnonblock(self->pd, nonblock, self->errbuf)) {
+        PyErr_SetString(PyPCAP_Error, self->errbuf);
+        return NULL;
+    }
+
     Py_RETURN_NONE;
 }
 
 static PyObject * PyPCAP_getnonblock(PyPCAP *self) {
-    Py_RETURN_NONE;
+    int nonblock;
+
+    PCAPCTX;
+
+    nonblock = pcap_getnonblock(self->pd, self->errbuf);
+    if(PCAP_ERROR == nonblock) {
+        PyErr_SetString(PyPCAP_Error, self->errbuf);
+        return NULL;
+    }
+
+    return PyBool_FromLong(nonblock);
 }
 
 static PyObject * PyPCAP_setfilter(PyPCAP *self, PyObject *args) {
@@ -395,6 +405,7 @@ static PyObject * PyPCAP_setfilter(PyPCAP *self, PyObject *args) {
 static PyObject * PyPCAP_loop(PyPCAP *self, PyObject *args) {
     Py_ssize_t len;
     int cnt = -1;
+    int retval;
 
     PCAPCTX;
 
@@ -424,8 +435,12 @@ static PyObject * PyPCAP_loop(PyPCAP *self, PyObject *args) {
     Py_CLEAR(self->cbargs);
     self->cbargs = PyTuple_GetSlice(args, 2, len);
 
+    Py_BEGIN_ALLOW_THREADS
+    retval = pcap_loop(self->pd, cnt, pcap_callback, (u_char *)self);
+    Py_END_ALLOW_THREADS
+
     // the callback breaks the loop when it raises, so its exception takes priority
-    if(PCAP_ERROR == pcap_loop(self->pd, cnt, pcap_callback, (u_char *)self) && !PyErr_Occurred()) {
+    if(PCAP_ERROR == retval && !PyErr_Occurred()) {
         PyErr_SetString(PyPCAP_Error, pcap_geterr(self->pd));
     }
 
@@ -456,9 +471,10 @@ static PyObject * PyPCAP_next_ex(PyPCAP *self) {
     Py_END_ALLOW_THREADS
 
     if(1 == retval) {
-        return Py_BuildValue("y#kll", data, (Py_ssize_t)hdr->caplen, (unsigned long)hdr->len, (long)hdr->ts.tv_sec, (long)hdr->ts.tv_usec);
+        return Py_BuildValue("(y#dk)", data, (Py_ssize_t)hdr->caplen, TIMESTAMP(hdr), (unsigned long)hdr->len);
     }
-    else if(!retval) {
+    else if(0 == retval || PCAP_ERROR_BREAK == retval) {
+        // timeout, or no more packets in a file
         Py_RETURN_NONE;
     }
     else {
@@ -490,7 +506,6 @@ static PyObject * PyPCAP_inject(PyPCAP *self, PyObject *args) {
 #endif
 
 static PyObject * PyPCAP_sendpacket(PyPCAP *self, PyObject *args) {
-    BYTE pkt[1514];
     char *data;
     Py_ssize_t len;
 
@@ -500,16 +515,7 @@ static PyObject * PyPCAP_sendpacket(PyPCAP *self, PyObject *args) {
         return NULL;
     }
 
-    if(1514 < len) {
-        PyErr_SetString(PyPCAP_Error, "Maximum packet length (1514) exceeded");
-        return NULL;
-    }
-
-    memcpy(pkt, data, len);
-
-    crc(pkt + 14);
-
-    if(-1 == pcap_sendpacket(self->pd, pkt, (int)len)) {
+    if(-1 == pcap_sendpacket(self->pd, (const u_char *)data, (int)len)) {
         PyErr_SetString(PyPCAP_Error, pcap_geterr(self->pd));
         return NULL;
     }
@@ -551,5 +557,4 @@ int pcap_compile(pcap_t *p, struct bpf_program *fp, const char *str, int optimiz
 int pcap_dispatch(pcap_t *p, int cnt, pcap_handler callback, u_char *user);
 */
 
-#include "crc.c"
 #include "win32.c"

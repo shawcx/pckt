@@ -22,24 +22,20 @@
 
 // PCAP Module
 
-PyMODINIT_FUNC PyInit_pypcap(void);
+PyMODINIT_FUNC PyInit_pcap(void);
 
 static PyObject * PyPCAP_lib_version  ( PyObject * self );
 static PyObject * PyPCAP_findalldevs  ( PyObject * self );
-static PyObject * PyPCAP_create       ( PyObject * self, PyObject * args );
 static PyObject * PyPCAP_open_live    ( PyObject * self, PyObject * args );
 static PyObject * PyPCAP_open_offline ( PyObject * self, PyObject * args );
 
 // C callback that executes the Python callback
-void pcap_callback ( u_char * user, const struct pcap_pkthdr * hdr, const u_char * data);
+static void pcap_callback ( u_char * user, const struct pcap_pkthdr * hdr, const u_char * data);
 
 #ifdef WIN32
 // helper functions for nice device names on windows
 PyObject * device_to_canonical ( char * guid );
 #endif // WIN32
-
-// compute crc on outbound packets
-void crc ( BYTE * pkt );
 
 // Python Exception
 static PyObject *PyPCAP_Error;
@@ -51,14 +47,11 @@ static PyMethodDef PyPCAP_module_methods[] = {
 	{ "findalldevs",  (PyCFunction)PyPCAP_findalldevs,  METH_NOARGS,
 	  "findalldevs() => return dictionary of interfaces" },
 
-	{ "create",       (PyCFunction)PyPCAP_create,       METH_O,
-	  "create(device) => pcap object" },
-
 	{ "open_live",    (PyCFunction)PyPCAP_open_live,    METH_VARARGS,
-	  "open_live(device, [capture length], [promisc], [read timeout]) => pcap object" },
+	  "open_live(device, [snaplen=65535], [promisc=True], [timeout_ms=0]) => handle" },
 
 	{ "open_offline", (PyCFunction)PyPCAP_open_offline, METH_O,
-	  "open_offline(filename) => pcap object" },
+	  "open_offline(filename) => handle" },
 
 	{ NULL }
 };
@@ -107,23 +100,37 @@ static PyObject * PyPCAP_getevent       ( PyPCAP * self );
 #endif // WIN32
 
 static PyMethodDef PyPCAP_Type_methods[] = {
-	{ "list_datalinks", (PyCFunction)PyPCAP_list_datalinks, METH_NOARGS  },
-	{ "datalink",       (PyCFunction)PyPCAP_datalink,       METH_NOARGS  },
-	{ "setdirection",   (PyCFunction)PyPCAP_setdirection,   METH_VARARGS },
-	{ "setnonblock",    (PyCFunction)PyPCAP_setnonblock,    METH_O       },
-	{ "getnonblock",    (PyCFunction)PyPCAP_getnonblock,    METH_NOARGS  },
-	{ "setfilter",      (PyCFunction)PyPCAP_setfilter,      METH_O       },
-	{ "loop",           (PyCFunction)PyPCAP_loop,           METH_VARARGS },
-	{ "breakloop",      (PyCFunction)PyPCAP_breakloop,      METH_NOARGS  },
-	{ "next",           (PyCFunction)PyPCAP_next_ex,        METH_NOARGS  },
-	{ "next_ex",        (PyCFunction)PyPCAP_next_ex,        METH_NOARGS  },
+	{ "list_datalinks", (PyCFunction)PyPCAP_list_datalinks, METH_NOARGS,
+	  "list_datalinks() => [(dlt, name, description), ...]" },
+	{ "datalink",       (PyCFunction)PyPCAP_datalink,       METH_NOARGS,
+	  "datalink() => (dlt, name, description)" },
+	{ "setdirection",   (PyCFunction)PyPCAP_setdirection,   METH_VARARGS,
+	  "setdirection(D_IN | D_OUT | D_INOUT)" },
+	{ "setnonblock",    (PyCFunction)PyPCAP_setnonblock,    METH_O,
+	  "setnonblock(bool)" },
+	{ "getnonblock",    (PyCFunction)PyPCAP_getnonblock,    METH_NOARGS,
+	  "getnonblock() => bool" },
+	{ "setfilter",      (PyCFunction)PyPCAP_setfilter,      METH_O,
+	  "setfilter(bpf expression)" },
+	{ "loop",           (PyCFunction)PyPCAP_loop,           METH_VARARGS,
+	  "loop(callback, [count=-1], *extra) calls callback(data, ts, wirelen, *extra) per packet; "
+	  "stops after count packets, on breakloop() or when the callback raises" },
+	{ "breakloop",      (PyCFunction)PyPCAP_breakloop,      METH_NOARGS,
+	  "breakloop() stops loop(), including from another thread" },
+	{ "next",           (PyCFunction)PyPCAP_next_ex,        METH_NOARGS,
+	  "next() => (data, ts, wirelen), or None on timeout or end of file" },
 #ifndef WIN32
-	{ "inject",         (PyCFunction)PyPCAP_inject,         METH_O       },
+	{ "inject",         (PyCFunction)PyPCAP_inject,         METH_O,
+	  "inject(bytes) => bytes sent" },
 #endif
-	{ "sendpacket",     (PyCFunction)PyPCAP_sendpacket,     METH_O       },
-	{ "snapshot",       (PyCFunction)PyPCAP_snapshot,       METH_NOARGS  },
-	{ "close",          (PyCFunction)PyPCAP_close,          METH_NOARGS  },
-	{ "stats",          (PyCFunction)PyPCAP_stats,          METH_NOARGS  },
+	{ "sendpacket",     (PyCFunction)PyPCAP_sendpacket,     METH_O,
+	  "sendpacket(bytes)" },
+	{ "snapshot",       (PyCFunction)PyPCAP_snapshot,       METH_NOARGS,
+	  "snapshot() => snaplen" },
+	{ "close",          (PyCFunction)PyPCAP_close,          METH_NOARGS,
+	  "close()" },
+	{ "stats",          (PyCFunction)PyPCAP_stats,          METH_NOARGS,
+	  "stats() => (received, dropped, dropped by interface)" },
 #ifdef WIN32
 //	{ "stats_ex",       (PyCFunction)PyPCAP_stats_ex,       METH_NOARGS  },
 	{ "getevent",       (PyCFunction)PyPCAP_getevent,       METH_NOARGS  },
@@ -133,7 +140,7 @@ static PyMethodDef PyPCAP_Type_methods[] = {
 
 static PyTypeObject PyPCAP_Type = {
 	PyVarObject_HEAD_INIT(NULL, 0)
-	"pypcap.pypcap",                   // name
+	"pckt.pcap.Handle",                // name
 	sizeof(PyPCAP),                    // basicsize
 	0,                                 // itemsize
 	(destructor)PyPCAP_Type_dealloc,   // dealloc
@@ -152,7 +159,7 @@ static PyTypeObject PyPCAP_Type = {
 	0,                                 // setattro
 	0,                                 // as_buffer
 	Py_TPFLAGS_DEFAULT,
-	"pcap class",                      // doc
+	"pcap capture handle",             // doc
 	0,                                 // traverse
 	0,                                 // clear
 	0,                                 // richcompare

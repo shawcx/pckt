@@ -35,18 +35,12 @@ setup(
         ],
     ext_modules = [
         Extension(
-            'pypcap',
-            ['src/pckt.c'],
+            'pckt.pcap',
+            ['src/pcapmodule.c'],
             define_macros = defines,
             include_dirs = include_dirs,
             library_dirs = library_dirs,
             libraries = libs
-            ),
-        Extension(
-            'packetio',
-            ['src/packetio.c'] + ['src/layers/%s.c' % l for l in ('ethernet', 'arp', 'ip', 'tcp', 'udp', 'icmp')],
-            define_macros = defines,
-            include_dirs = ['include', 'src'] + include_dirs,
             ),
         ]
     )
