@@ -473,9 +473,13 @@ static PyObject * PyPCAP_next_ex(PyPCAP *self) {
     if(1 == retval) {
         return Py_BuildValue("(y#dk)", data, (Py_ssize_t)hdr->caplen, TIMESTAMP(hdr), (unsigned long)hdr->len);
     }
-    else if(0 == retval || PCAP_ERROR_BREAK == retval) {
-        // timeout, or no more packets in a file
+    else if(0 == retval) {
+        // timeout, or nothing available in non-blocking mode
         Py_RETURN_NONE;
+    }
+    else if(PCAP_ERROR_BREAK == retval) {
+        PyErr_SetNone(PyExc_EOFError);
+        return NULL;
     }
     else {
         PyErr_SetString(PyPCAP_Error, pcap_geterr(self->pd));
@@ -484,6 +488,20 @@ static PyObject * PyPCAP_next_ex(PyPCAP *self) {
 }
 
 #ifndef WIN32
+static PyObject * PyPCAP_fileno(PyPCAP *self) {
+    int fd;
+
+    PCAPCTX;
+
+    fd = pcap_get_selectable_fd(self->pd);
+    if(-1 == fd) {
+        PyErr_SetString(PyPCAP_Error, "no selectable descriptor for this handle");
+        return NULL;
+    }
+
+    return PyLong_FromLong(fd);
+}
+
 static PyObject * PyPCAP_inject(PyPCAP *self, PyObject *args) {
     char *data;
     Py_ssize_t len;

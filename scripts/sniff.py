@@ -9,6 +9,7 @@ Print decoded packets.
 import sys
 
 from pckt import pcap, Ethernet
+from pckt.capture import packets
 
 
 def main():
@@ -20,15 +21,13 @@ def main():
                 print(name, info)
         return
 
-    # a short timeout so next() returns regularly and Ctrl-C works
     pd = pcap.open_live(sys.argv[1], 65535, True, 100)
     if 2 < len(sys.argv):
         pd.setfilter(' '.join(sys.argv[2:]))
 
     count = 0
     try:
-        while True:
-            result = pd.next()
+        for result in packets(pd):
             if result is None:
                 continue
             (data, ts, wirelen) = result

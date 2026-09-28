@@ -9,6 +9,7 @@ import textwrap
 import unittest
 
 from pckt import Ethernet, IP, UDP, TCP
+from pckt.capture import packets
 
 try:
     from pckt import pcap
@@ -59,8 +60,16 @@ class TestPcap(unittest.TestCase):
         self.assertEqual(len(FRAMES[0]), wirelen)
         pd.next()
         pd.next()
-        self.assertIsNone(pd.next())
+        with self.assertRaises(EOFError):
+            pd.next()
         pd.close()
+
+    def test_packets_file(self):
+        pd = pcap.open_offline(self.path)
+        self.assertEqual(FRAMES, [data for (data, ts, wirelen) in packets(pd)])
+
+    def test_fileno(self):
+        self.assertIsInstance(pcap.open_offline(self.path).fileno(), int)
 
     def test_wirelen(self):
         write_pcap(self.path, FRAMES[:1], wirelen_extra=100)

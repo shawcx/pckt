@@ -13,6 +13,7 @@ import argparse
 import socket
 import struct
 
+from pckt.capture import packets
 from pckt import pcap, vendor, Ethernet, ARP, DHCP
 
 UNSPECIFIED = '0.0.0.0'
@@ -96,17 +97,13 @@ def main():
     if args.file:
         pd = pcap.open_offline(args.file)
     else:
-        # a short timeout so next() returns regularly and Ctrl-C works
         pd = pcap.open_live(args.device, 65535, True, 100)
     pd.setfilter('arp or (udp and (port 67 or port 68))')
 
     mapper = PassiveMapper()
     try:
-        while True:
-            result = pd.next()
+        for result in packets(pd):
             if result is None:
-                if args.file:
-                    break
                 continue
             host = mapper.process(result[0])
             if host:

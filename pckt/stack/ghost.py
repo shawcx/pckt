@@ -14,6 +14,7 @@ import socket
 import struct
 import time
 
+from pckt.capture import packets
 from pckt import pcap, mac, Ethernet, ARP, IP, ICMP, ICMP_EchoRequest, ICMP_EchoReply, UDP, DHCP
 
 BROADCAST = b'\xff' * 6
@@ -44,10 +45,8 @@ class Ghost:
         if self.ip is None:
             self.dhcp(DHCP.DISCOVER)
 
-        # next() returns on the capture timeout, so Ctrl-C is handled promptly
         try:
-            while True:
-                result = self.pd.next()
+            for result in packets(self.pd):
                 if result:
                     self.inbound(result[0])
                 self.tick()
@@ -164,7 +163,6 @@ def main():
     if args.device not in devices:
         parser.error('unknown device: %s' % args.device)
 
-    # a short timeout so next() returns regularly
     pd = pcap.open_live(args.device, 65535, True, 100)
     # only capture inbound packets; does nothing on windows
     pd.setdirection(pcap.D_IN)

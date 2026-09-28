@@ -88,6 +88,9 @@ static PyObject * PyPCAP_loop           ( PyPCAP * self, PyObject * args );
 static PyObject * PyPCAP_breakloop      ( PyPCAP * self );
 static PyObject * PyPCAP_next_ex        ( PyPCAP * self );
 #ifndef WIN32
+static PyObject * PyPCAP_fileno         ( PyPCAP * self );
+#endif
+#ifndef WIN32
 static PyObject * PyPCAP_inject         ( PyPCAP * self, PyObject * args );
 #endif
 static PyObject * PyPCAP_sendpacket     ( PyPCAP * self, PyObject * args );
@@ -114,11 +117,18 @@ static PyMethodDef PyPCAP_Type_methods[] = {
 	  "setfilter(bpf expression)" },
 	{ "loop",           (PyCFunction)PyPCAP_loop,           METH_VARARGS,
 	  "loop(callback, [count=-1], *extra) calls callback(data, ts, wirelen, *extra) per packet; "
-	  "stops after count packets, on breakloop() or when the callback raises" },
+	  "stops after count packets, on breakloop() or when the callback raises. "
+	  "Signals (Ctrl-C) are only seen when a packet arrives; see pckt.capture.packets()" },
 	{ "breakloop",      (PyCFunction)PyPCAP_breakloop,      METH_NOARGS,
 	  "breakloop() stops loop(), including from another thread" },
 	{ "next",           (PyCFunction)PyPCAP_next_ex,        METH_NOARGS,
-	  "next() => (data, ts, wirelen), or None on timeout or end of file" },
+	  "next() => (data, ts, wirelen), or None when no packet is available yet (timeout or non-blocking); "
+	  "raises EOFError at the end of a file" },
+#ifndef WIN32
+	{ "fileno",         (PyCFunction)PyPCAP_fileno,         METH_NOARGS,
+	  "fileno() => descriptor to select() on; use with setnonblock(True). "
+	  "On Linux the read timeout is not honored while the interface is idle." },
+#endif
 #ifndef WIN32
 	{ "inject",         (PyCFunction)PyPCAP_inject,         METH_O,
 	  "inject(bytes) => bytes sent" },
