@@ -1,5 +1,5 @@
-pckt (0.1) UNRELEASED; urgency=medium
+pckt (0.1) unstable; urgency=medium
 
-  * Initial Debian packaging.
+  * Initial release.
 
- -- Matthew Shaw <mshaw.cx@gmail.com>  Mon, 28 Sep 2026 00:30:34 -0400
+ -- Matthew Shaw <mshaw.cx@gmail.com>  Mon, 28 Sep 2026 05:34:05 -0400
