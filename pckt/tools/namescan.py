@@ -4,7 +4,6 @@ import sys
 import socket
 import threading
 import random
-import struct
 
 message = b'\t\xf5\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00 CKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\x00\x00!\x00\x01'
 
@@ -19,8 +18,8 @@ def scanip(ip):
     try:
         skt.sendto(message, (ip, 137))
         (msg,client) = skt.recvfrom(1024)
-        if struct.unpack('B', msg[56])[0]:
-            results[client[0]] = msg[57:72].strip()
+        if msg[56]:
+            results[client[0]] = msg[57:72].strip().decode('ascii', 'replace')
             sys.stdout.write('+')
             sys.stdout.flush()
 

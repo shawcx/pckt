@@ -33,13 +33,13 @@ if False:
             try:
                 self.pd = pypcap.open_file(self.interface[5:])
             except:
-                logging.warn('Could not open file %s', repr(self.interface))
+                logging.warning('Could not open file %s', repr(self.interface))
                 return False
         else:
             try:
                 self.pd = pypcap.open_live(self.interface)
             except:
-                logging.warn('Could not open interface %s', repr(self.interface))
+                logging.warning('Could not open interface %s', repr(self.interface))
                 return False
 
         while not self.should_stop():
@@ -123,9 +123,9 @@ if False:
             if 50 == option:
                 fields['ip'] = '.'.join('%d' % d for d in value)
             elif 12 == option:
-                fields['name'] = value
+                fields['name'] = value.decode('ascii', 'replace')
             elif 60 == option:
-                if value.startswith('MSFT'):
+                if value.startswith(b'MSFT'):
                     fields['os'] = 'windows'
 
             #print(option, repr(value))

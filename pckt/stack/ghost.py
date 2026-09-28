@@ -24,7 +24,7 @@ class GhostAdapter:
 
         if settings:
             # split on ':', convert string to integer to byte and join
-            self.mac  = ''.join(chr(int(o,16)) for o in settings['mac'].split(':', 6))
+            self.mac  = bytes(int(o,16) for o in settings['mac'].split(':', 6))
             #self.ip   = socket.inet_aton(settings['ip'])
             #self.mask = socket.inet_aton(settings['netmask'])
             self.ip   = settings['ip']
