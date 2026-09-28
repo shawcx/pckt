@@ -1,6 +1,7 @@
 # Build the pcap extension and run the unit tests on the oldest supported
 # Python and the newest, then check that the sdist installs and works outside
-# the source tree.
+# the source tree, and build the Debian package on Ubuntu 24.04 and Debian
+# trixie (the .debs are kept as artifacts).
 #
 # test_live.py needs unprivileged user namespaces, which the default Docker
 # seccomp profile blocks, so on a Docker runner it's reported as skipped.
@@ -39,3 +40,29 @@ sdist:
   artifacts:
     paths:
       - dist/
+
+deb:
+  stage: build
+  image: $IMAGE
+  parallel:
+    matrix:
+      - IMAGE: ["ubuntu:24.04", "debian:trixie"]
+  variables:
+    DEBIAN_FRONTEND: noninteractive
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends dpkg-dev lintian >/dev/null
+    - apt-get build-dep -y -qq ./ >/dev/null
+  script:
+    # runs the tests against the built extension too
+    - dpkg-buildpackage -us -uc -b
+    # dpkg-buildpackage writes to the parent directory; artifacts must be in the project.
+    # Ubuntu's debug symbols are a .ddeb, which Debian doesn't produce.
+    - mkdir deb
+    - find .. -maxdepth 1 -type f \( -name '*.deb' -o -name '*.ddeb' -o -name '*.changes' -o -name '*.buildinfo' \) -exec mv -t deb/ {} +
+    - lintian --fail-on error,warning deb/*.changes
+    - apt-get install -y -qq ./deb/python3-pckt_*_$(dpkg --print-architecture).deb >/dev/null
+    - cd / && python3 -c 'import pckt; from pckt import pcap; print(pckt.__file__, pcap.lib_version()); assert pckt.vendor("00:50:56:00:00:01") == "VMware"'
+  artifacts:
+    paths:
+      - deb/
