@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
+# metadata is in pyproject.toml; the extension's build settings depend on the platform
+
 import platform
 
-from setuptools import setup, find_namespace_packages, Extension
+from setuptools import setup, Extension
 
 if 'Windows' == platform.system():
     defines = [('WIN32',None),('WPCAP',None)]
@@ -16,23 +18,6 @@ else:
     libs = ['pcap']
 
 setup(
-    name = 'pckt',
-    version = '0.1',
-    description = 'PCAP bindings and packet (de)construction',
-    long_description = open('README.rst').read(),
-    license = 'TBD',
-    python_requires = '>=3.6',
-    packages = find_namespace_packages(include=['pckt', 'pckt.*']),
-    package_data = {'pckt': ['manuf']},
-    scripts = [
-        'pckt/tools/pckt-eth',
-        'pckt/tools/pckt-arp',
-        'pckt/tools/pckt-ip',
-        'pckt/tools/pckt-ip6',
-        'pckt/tools/pckt-tcp',
-        'pckt/tools/pckt-udp',
-        'pckt/tools/update-pckt-manuf',
-        ],
     ext_modules = [
         Extension(
             'pckt.pcap',
