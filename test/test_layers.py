@@ -7,7 +7,7 @@ import unittest
 from pckt import (
     Layer, checksum, Ethernet, VLAN, ARP, IP, IPv6, ICMP, ICMP_EchoRequest, ICMP_EchoReply,
     ICMPv6, ICMPv6_EchoRequest, ICMPv6_EchoReply, ICMPv6_NeighborSolicit, ICMPv6_NeighborAdvert,
-    TCP, UDP, DHCP, DHCP_Request, DHCPv6, DHCPv6Relay, LLDP,
+    TCP, UDP, DHCP, DHCP_Request, DHCPv6, DHCPv6Relay, LLDP, SSDP,
     )
 
 
@@ -407,6 +407,81 @@ class TestDHCPv6(unittest.TestCase):
     def test_options_not_shared(self):
         DHCPv6().options.append((1, b'x'))
         self.assertEqual([], DHCPv6().options)
+
+
+# Chromium's DIAL search, as dial_service_impl.cc builds it
+CHROME_SEARCH = (
+    b'M-SEARCH * HTTP/1.1\r\n'
+    b'HOST: 239.255.255.250:1900\r\n'
+    b'MAN: "ssdp:discover"\r\n'
+    b'MX: 1\r\n'
+    b'ST: urn:dial-multiscreen-org:service:dial:1\r\n'
+    b'USER-AGENT: Google Chrome/141.0.7390.55 Mac OS X\r\n'
+    b'\r\n'
+    )
+
+# an answer to a search: EXT has no value
+SSDP_RESPONSE = (
+    b'HTTP/1.1 200 OK\r\n'
+    b'CACHE-CONTROL: max-age=1800\r\n'
+    b'EXT:\r\n'
+    b'LOCATION: http://10.0.0.1:5000/rootDesc.xml\r\n'
+    b'SERVER:Linux/5.4.0 UPnP/1.1 MiniUPnPd/2.2.1\r\n'
+    b'ST: upnp:rootdevice\r\n'
+    b'USN: uuid:12345678-0000-0000-0000-000000000000::upnp:rootdevice\r\n'
+    b'\r\n'
+    )
+
+
+def ssdp_notify(server='Linux/5.4.0 UPnP/1.1 MiniUPnPd/2.2.1', location='http://10.0.0.1:5000/rootDesc.xml'):
+    headers = ['HOST: 239.255.255.250:1900', 'CACHE-CONTROL: max-age=120', 'LOCATION: %s' % location,
+               'NT: upnp:rootdevice', 'NTS: ssdp:alive', 'SERVER: %s' % server,
+               'USN: uuid:12345678-0000-0000-0000-000000000000::upnp:rootdevice']
+    return SSDP(start=SSDP.NOTIFY, headers=headers)
+
+
+class TestSSDP(unittest.TestCase):
+    def test_decode(self):
+        msg = SSDP.decode(CHROME_SEARCH)
+        self.assertEqual(SSDP.SEARCH, msg.start)
+        self.assertEqual('Google Chrome/141.0.7390.55 Mac OS X', msg.header('user-agent'))
+        self.assertEqual('"ssdp:discover"', msg.header('MAN'))
+        self.assertIsNone(msg.header('SERVER'))
+        self.assertEqual(CHROME_SEARCH, msg.pack())
+
+    def test_headers_verbatim(self):
+        msg = SSDP.decode(SSDP_RESPONSE)
+        self.assertEqual((SSDP.OK, '', 'Linux/5.4.0 UPnP/1.1 MiniUPnPd/2.2.1'), (msg.start, msg.header('EXT'), msg.header('Server')))
+        self.assertEqual(SSDP_RESPONSE, msg.pack())
+
+    def test_build(self):
+        data = ssdp_notify().pack()
+        self.assertTrue(data.startswith(b'NOTIFY * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\n'))
+        self.assertTrue(data.endswith(b'::upnp:rootdevice\r\n\r\n'))
+        self.assertEqual(b'M-SEARCH * HTTP/1.1\r\n\r\n', SSDP().pack())
+
+    def test_transport(self):
+        data = (IP() / UDP() / SSDP()).pack()
+        self.assertEqual((1900, 1900), struct.unpack('!HH', data[20:24]))
+        # an answer goes from 1900 to the searcher's port
+        pkt = Ethernet.decode((Ethernet() / IP() / UDP(src=1900, dst=50000) / SSDP_RESPONSE).pack())
+        self.assertIsInstance(pkt[UDP].payload, SSDP)
+
+    def test_body_kept(self):
+        self.assertEqual(b'extra', SSDP.decode(CHROME_SEARCH + b'extra').payload)
+
+    def test_truncated(self):
+        data = CHROME_SEARCH[:-2]
+        with self.assertRaises(struct.error):
+            SSDP.decode(data)
+        # inside a frame it's kept as bytes
+        pkt = Ethernet.decode((Ethernet() / IP() / UDP(src=50000, dst=1900) / data).pack())
+        self.assertNotIn(SSDP, pkt)
+        self.assertEqual(data, pkt[UDP].payload)
+
+    def test_headers_not_shared(self):
+        SSDP().headers.append('MX: 1')
+        self.assertEqual([], SSDP().headers)
 
 
 def lldp_switch(port_mac=b'\x00\x11\x22\x33\x44\x02'):

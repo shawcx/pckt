@@ -28,8 +28,8 @@ Fields left unset are computed when packing; anything set explicitly is
 sent as-is, so malformed packets are easy to build on purpose.
 
 Layers: Ethernet, VLAN (802.1Q), ARP, LLDP, IP, IPv6, ICMP, ICMPv6 (echo,
-neighbor discovery), TCP, UDP, DHCP, DHCPv6, DNS (including mDNS and LLMNR)
-and NetBIOS name service.
+neighbor discovery), TCP, UDP, DHCP, DHCPv6, DNS (including mDNS and LLMNR),
+NetBIOS name service and SSDP.
 
 Devices
 -------
@@ -63,7 +63,8 @@ anything, from traffic that stays on the local link:
   discovery and DHCPv6
 - names from DHCP, DHCPv6, mDNS, LLMNR, NetBIOS name registrations and LLDP
 - the OS from DHCP and DHCPv6: the vendor class, or else which options a DHCP
-  client asks for (Windows, macOS, iOS, Android, Linux)
+  client asks for (Windows, macOS, iOS, Android, Linux); failing those, from
+  the product a device announces over SSDP, or a browser searches with
 - descriptions, capabilities and management addresses from LLDP
 - the vendor, from the MAC
 

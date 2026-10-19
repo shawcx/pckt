@@ -10,10 +10,10 @@ import unittest
 
 from pckt import (
     checksum, Ethernet, ARP, IP, IPv6, ICMP, ICMP_EchoRequest, ICMP_EchoReply, ICMPv6, ICMPv6_EchoRequest,
-    ICMPv6_NeighborSolicit, ICMPv6_NeighborAdvert, UDP, DHCP, DHCPv6, DNS, DNSQuestion, DNSRR, NBNS, LLDP,
+    ICMPv6_NeighborSolicit, ICMPv6_NeighborAdvert, UDP, DHCP, DHCPv6, DNS, DNSQuestion, DNSRR, NBNS, SSDP, LLDP,
     )
 from pckt.stack.ghost import Ghost, BROADCAST, DHCP_RETRY
-from pckt.mapping.passive import PassiveMapper, describe
+from pckt.mapping.passive import PassiveMapper, describe, ssdp_os
 
 try:
     from pckt import pcap
@@ -21,7 +21,7 @@ except ImportError:
     pcap = None
 
 from test_pcap import write_pcap
-from test_layers import lldp_switch, fqdn_option
+from test_layers import lldp_switch, fqdn_option, ssdp_notify, CHROME_SEARCH
 
 GHOST_MAC = bytes.fromhex('020000000001')
 PEER_MAC = bytes.fromhex('00505600aabb')  # VMware prefix, for the vendor lookup
@@ -214,6 +214,11 @@ def dhcpv6_from(mac, kind=DHCPv6.SOLICIT, options=(), dst='33:33:00:01:00:02'):
     return (Ethernet(src=mac, dst=dst) / IPv6(src='fe80::7', dst='ff02::1:2') / UDP() / DHCPv6(type=kind, options=list(options))).pack()
 
 
+def ssdp_from(mac, src, msg):
+    dst = SSDP.MULTICAST6 if ':' in src else SSDP.MULTICAST
+    return (Ethernet(src=mac, dst='01:00:5e:7f:ff:fa') / (IPv6 if ':' in src else IP)(src=src, dst=dst) / UDP() / msg).pack()
+
+
 MSFT_VENDOR_CLASS = (DHCPv6.VENDOR_CLASS, struct.pack('!IH', 311, 8) + b'MSFT 5.0')
 
 
@@ -374,6 +379,66 @@ class TestPassive(unittest.TestCase):
         self.assertIsNone(mapper.process(dhcpv6_from(SERVER_MAC, DHCPv6.RENEW, options, dst=GHOST_MAC)))
         self.assertEqual({}, mapper.hosts)
 
+    def test_ssdp_os(self):
+        cases = [
+            ('Linux/5.4.0 UPnP/1.1 MiniUPnPd/2.2.1', 'linux'),
+            ('Microsoft-Windows/10.0 UPnP/1.0 UPnP-Device-Host/1.0', 'windows'),
+            ('Microsoft-Windows-NT/5.1 UPnP/1.0 UPnP-Device-Host/1.0', 'windows'),
+            # commas, and a vendor's prefix
+            ('Linux/5.4.259-ab2091, UPnP/1.0, Chromecast/1.6.18', 'linux'),
+            ('Samsung-Linux/4.1, UPnP/1.0, Samsung_UPnP_SDK/1.0', 'linux'),
+            ('FreeBSD/14.1-RELEASE UPnP/1.1 MiniUPnPd/2.3.7', 'freebsd'),
+            # Chromium's searches
+            ('Google Chrome/141.0.7390.55 Mac OS X', 'macos'),
+            ('Chromium/141.0.7390.55 Linux', 'linux'),
+            ('Google Chrome/141.0.7390.55 ChromeOS', 'chromeos'),
+            # no OS, and Apple's kernel, which doesn't say which OS
+            ('UPnP/1.0 DLNADOC/1.50 Platinum/1.0.5.13', None),
+            ('SHP, UPnP/1.0, Samsung UPnP SDK/1.0', None),
+            ('Darwin/23.0.0 UPnP/1.0 VLC/3.0', None),
+            ('', None),
+            ]
+        for (product, system) in cases:
+            self.assertEqual(system, ssdp_os(product), product)
+
+    def test_ssdp(self):
+        mapper = PassiveMapper()
+        host = mapper.process(ssdp_from(PEER_MAC, '10.0.0.1', ssdp_notify()))
+        self.assertEqual('linux', host['os'])
+        # a browser's search
+        self.assertEqual('macos', mapper.process(ssdp_from(SERVER_MAC, '10.0.0.9', SSDP.decode(CHROME_SEARCH)))['os'])
+        # over IPv6
+        notify = ssdp_notify(server='FreeBSD/14.1 UPnP/1.1 MiniUPnPd/2.3', location='http://[fe80::5]:5000/rootDesc.xml')
+        self.assertEqual('freebsd', mapper.process(ssdp_from(GHOST_MAC, 'fe80::5', notify))['os'])
+
+    def test_ssdp_weaker(self):
+        mapper = PassiveMapper()
+        # DHCP's OS stays
+        mapper.process(dhcp_request(PEER_MAC, vendor_class=b'android-dhcp-14'))
+        self.assertIsNone(mapper.process(ssdp_from(PEER_MAC, '10.0.0.50', ssdp_notify(location='http://10.0.0.50:8008/'))))
+        # and replaces SSDP's
+        mapper.process(ssdp_from(SERVER_MAC, '10.0.0.51', ssdp_notify(location='http://10.0.0.51:8008/')))
+        self.assertEqual('android', mapper.process(dhcp_request(SERVER_MAC, vendor_class=b'android-dhcp-14'))['os'])
+
+    def test_ssdp_ignored(self):
+        mapper = PassiveMapper()
+        frames = [
+            # a proxy announcing another device
+            ssdp_from(PEER_MAC, '10.0.0.9', ssdp_notify(location='http://10.0.0.1:5000/rootDesc.xml')),
+            ssdp_from(PEER_MAC, '10.0.0.9', ssdp_notify(location='/rootDesc.xml')),
+            # no OS
+            ssdp_from(PEER_MAC, '10.0.0.1', ssdp_notify(server='UPnP/1.0 DLNADOC/1.50 Platinum/1.0.5.13')),
+            # a search without a user agent
+            ssdp_from(PEER_MAC, '10.0.0.9', SSDP(headers=['ST: ssdp:all'])),
+            ]
+        for frame in frames:
+            self.assertIsNone(mapper.process(frame))
+        self.assertEqual({}, mapper.hosts)
+        # multicast routed from another subnet: from the router's MAC, whose address is known
+        mapper.process(arp_from(SERVER_MAC, '10.0.0.254'))
+        self.assertIsNone(mapper.process(ssdp_from(SERVER_MAC, '10.9.0.1', ssdp_notify(location='http://10.9.0.1:5000/'))))
+        self.assertNotIn('os', mapper.hosts['00:50:56:00:cc:dd'])
+
     def test_lldp(self):
         mapper = PassiveMapper()
         host = mapper.process((Ethernet(dst=LLDP.MULTICAST, src='00:11:22:33:44:02') / lldp_switch()).pack())
@@ -424,6 +489,7 @@ class TestPassive(unittest.TestCase):
                 nbns_from(bytes.fromhex('00155d000001'), '10.0.0.11', 'FILESERVER'),
                 llmnr_from(bytes.fromhex('00155d000002'), '10.0.0.12', [DNSRR('desktop', DNS.A, ttl=30, data='10.0.0.12')]),
                 dhcpv6_from(bytes.fromhex('00155d000003'), options=[(DHCPv6.CLIENT_FQDN, fqdn_option(b'workstation'))]),
+                ssdp_from(bytes.fromhex('00155d000004'), '10.0.0.1', ssdp_notify()),
                 ])
             root = os.path.dirname(os.path.dirname(pcap.__file__))
             result = subprocess.run(
@@ -432,7 +498,7 @@ class TestPassive(unittest.TestCase):
                 )
         self.assertEqual(0, result.returncode, result.stderr)
         lines = result.stdout.splitlines()
-        self.assertEqual(8, len(lines))
+        self.assertEqual(9, len(lines))
         self.assertIn('10.0.0.7', lines[0])
         self.assertIn('laptop', lines[1])
         self.assertIn('fe80::1', lines[2])
@@ -441,6 +507,7 @@ class TestPassive(unittest.TestCase):
         self.assertIn('FILESERVER', lines[5])
         self.assertIn('desktop', lines[6])
         self.assertIn('workstation', lines[7])
+        self.assertIn('linux', lines[8])
 
 
 if '__main__' == __name__:

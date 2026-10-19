@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 '''
 Passively map hosts on the local network from ARP, DHCP, DHCPv6, IPv6
-neighbor discovery, mDNS, LLMNR, NetBIOS name service and LLDP traffic.
+neighbor discovery, mDNS, LLMNR, NetBIOS name service, SSDP and LLDP traffic.
 
     sudo python3 -m pckt.mapping.passive eth0
     python3 -m pckt.mapping.passive --file capture.pcap
@@ -12,12 +12,14 @@ when they're broadcast or multicast.
 '''
 
 import argparse
+import re
 import socket
 import struct
+from urllib.parse import urlsplit
 
 from pckt.capture import packets
 from pckt import (
-    pcap, vendor, Ethernet, ARP, IP, IPv6, ICMPv6, ICMPv6_NeighborAdvert, UDP, DHCP, DHCPv6, DNS, NBNS, LLDP,
+    pcap, vendor, Ethernet, ARP, IP, IPv6, ICMPv6, ICMPv6_NeighborAdvert, UDP, DHCP, DHCPv6, DNS, NBNS, SSDP, LLDP,
     )
 
 UNSPECIFIED = '0.0.0.0'
@@ -54,6 +56,8 @@ class PassiveMapper:
             (addr, fields) = self.from_nbns(pkt[Ethernet], pkt[IP], pkt[NBNS])
         elif DNS in pkt and pkt[UDP].src in (MDNS_PORT, LLMNR_PORT):
             (addr, fields) = self.from_mdns(pkt[Ethernet].src, pkt, pkt[DNS])
+        elif SSDP in pkt and (IP in pkt or IPv6 in pkt):
+            (addr, fields) = self.from_ssdp(pkt[Ethernet].src, pkt, pkt[SSDP])
         elif LLDP in pkt:
             (addr, fields) = self.from_lldp(pkt[Ethernet].src, pkt[LLDP])
         else:
@@ -62,7 +66,7 @@ class PassiveMapper:
         if addr is None or not fields:
             return None
 
-        key = ':'.join('%.2x' % o for o in addr)
+        key = macstr(addr)
         host = self.hosts.setdefault(key, {'mac': key, 'vendor': vendor(addr)})
         changed = False
         for (name, value) in fields.items():
@@ -193,6 +197,32 @@ class PassiveMapper:
                 return (eth.src, {'name': name, 'ip': ip.src})
         return (None, None)
 
+    def from_ssdp(self, src, pkt, msg):
+        '''
+        the OS in the product string a device announces itself with, or a
+        browser searches with; it's a guess, so it only fills in an OS the
+        other sources haven't found
+        '''
+        sender = pkt[IP].src if IP in pkt else pkt[IPv6].src
+        host = self.hosts.get(macstr(src), {})
+        if host.get('os'):
+            return (None, None)
+        # multicast routed from another subnet comes from the router's MAC, whose address is known to be another
+        if IP in pkt and host.get('ip', sender) != sender:
+            return (None, None)
+
+        if msg.start.startswith('M-SEARCH '):
+            product = msg.header('USER-AGENT')
+        else:
+            # announcements and answers give the device's own address in the URL of its description,
+            # which a proxy announcing others doesn't
+            if urlsplit(msg.header('LOCATION', '')).hostname != sender:
+                return (None, None)
+            product = msg.header('SERVER')
+
+        system = ssdp_os(product or '')
+        return (src, {'os': system} if system else None)
+
     def from_lldp(self, src, msg):
         # a MAC chassis ID identifies a switch across its ports, which each send from their own MAC
         chassis = msg.tlv(LLDP.CHASSIS_ID, b'')
@@ -250,6 +280,39 @@ def dhcp_os(msg):
     return None
 
 
+# the OS names SSDP product strings start with, and Chromium's names for them
+SSDP_SYSTEMS = {
+    'linux': 'linux',
+    'openwrt': 'linux',
+    'android': 'android',
+    'windows': 'windows',
+    'microsoft-windows-nt': 'windows',
+    'mac os x': 'macos',
+    'ios': 'ios',
+    'chromeos': 'chromeos',
+    'chromiumos': 'chromeos',
+    'freebsd': 'freebsd',
+    'netbsd': 'netbsd',
+    'openbsd': 'openbsd',
+    }
+
+
+def ssdp_os(product):
+    '''the OS an SSDP SERVER or USER-AGENT header names, else None'''
+    # UPnP's "<OS>/<version> UPnP/<version> <product>/<version>", though some separate them with commas
+    name = re.split(r'[\s,/]', product, maxsplit=1)[0].lower()
+    # some prefix the OS with a vendor, as in Microsoft-Windows and Samsung-Linux
+    system = SSDP_SYSTEMS.get(name) or SSDP_SYSTEMS.get(name.rpartition('-')[2])
+    if system:
+        return system
+    # Chromium's DIAL searches: "<browser>/<version> <OS>"
+    return SSDP_SYSTEMS.get(product.partition('/')[2].partition(' ')[2].lower())
+
+
+def macstr(addr):
+    return ':'.join('%.2x' % o for o in addr)
+
+
 def multicast(addr):
     '''whether an ethernet address is broadcast or multicast, which stays on the local link'''
     return bool(addr[0] & 1)
@@ -283,7 +346,7 @@ def main():
         pd = pcap.open_offline(args.file)
     else:
         pd = pcap.open_live(args.device, 65535, True, 100)
-    ports = (67, 68, 137, 546, 547, MDNS_PORT, LLMNR_PORT)
+    ports = (67, 68, 137, 546, 547, 1900, MDNS_PORT, LLMNR_PORT)
     pd.setfilter('arp or icmp6 or ether proto 0x%x or (udp and (%s))' % (
         LLDP.ETHERTYPE, ' or '.join('port %d' % port for port in ports)))
 
