@@ -70,11 +70,39 @@ class PassiveMapper:
         if name:
             fields['name'] = name.decode('ascii', 'replace')
 
-        # TODO: stop assuming all microsoft dhcp clients send MSFT in option 60
-        if (msg.option(DHCP.VENDOR_CLASS) or b'').startswith(b'MSFT'):
-            fields['os'] = 'windows'
+        system = dhcp_os(msg)
+        if system:
+            fields['os'] = system
 
         return (msg.clientmac, fields)
+
+
+# clients that name themselves in the vendor class (option 60)
+VENDOR_CLASSES = (
+    (b'MSFT', 'windows'),
+    (b'android-dhcp-', 'android'),
+    (b'udhcp ', 'linux'),  # busybox
+    )
+
+
+def dhcp_os(msg):
+    '''guess a DHCP client's OS from its vendor class, else its parameter request list; None if unknown'''
+    vendor_class = msg.option(DHCP.VENDOR_CLASS) or b''
+    for (prefix, system) in VENDOR_CLASSES:
+        if vendor_class.startswith(prefix):
+            return system
+    # dhcpcd-<version>:<uname -s>-<uname -r>:<uname -m>
+    if vendor_class.startswith(b'dhcpcd-') and b':' in vendor_class:
+        return vendor_class.split(b':')[1].partition(b'-')[0].decode('ascii', 'replace').lower() or None
+
+    params = list(msg.option(DHCP.PARAMETER_LIST) or b'')
+    # Apple's client, with classless routes (121) second in newer versions; only macOS asks for LDAP (95)
+    if params[:5] in ([1, 121, 3, 6, 15], [1, 3, 6, 15, 119]) and {119, 252} <= set(params):
+        return 'macos' if 95 in params else 'ios'
+    # most Windows versions since 2000 ask for all of these, whether or not they send MSFT
+    if {31, 33, 43, 44, 46, 47} <= set(params):
+        return 'windows'
+    return None
 
 
 def describe(host):

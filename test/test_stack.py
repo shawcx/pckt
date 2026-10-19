@@ -158,12 +158,14 @@ class TestGhost(unittest.TestCase):
         self.assertEqual((bytes([DHCP.DISCOVER]), ghost.xid), (restart.option(DHCP.MESSAGE_TYPE), restart.transid))
 
 
-def dhcp_request(mac, name=None, vendor_class=None, requested='10.0.0.50'):
+def dhcp_request(mac, name=None, vendor_class=None, params=None, requested='10.0.0.50'):
     options = [(DHCP.MESSAGE_TYPE, bytes([DHCP.REQUEST])), (DHCP.REQUESTED_IP, socket.inet_aton(requested))]
     if name:
         options.append((DHCP.HOSTNAME, name))
     if vendor_class:
         options.append((DHCP.VENDOR_CLASS, vendor_class))
+    if params:
+        options.append((DHCP.PARAMETER_LIST, bytes(params)))
     return (Ethernet(src=mac) / IP(src='0.0.0.0') / UDP() / DHCP(clientmac=mac, options=options)).pack()
 
 
@@ -189,6 +191,30 @@ class TestPassive(unittest.TestCase):
         mapper = PassiveMapper()
         host = mapper.process(dhcp_request(PEER_MAC, name=b'desktop', vendor_class=b'MSFT 5.0'))
         self.assertEqual(('10.0.0.50', 'desktop', 'windows'), (host['ip'], host['name'], host['os']))
+
+    def test_dhcp_os(self):
+        cases = [
+            (b'MSFT 5.0', None, 'windows'),
+            (b'android-dhcp-14', [1, 3, 6, 15, 26, 28, 51, 58, 59, 43, 114, 108], 'android'),
+            (b'udhcp 1.36.1', None, 'linux'),
+            (b'dhcpcd-10.0.6:Linux-6.6.31+rpt-rpi-v8:aarch64:BCM2835', None, 'linux'),
+            (b'dhcpcd-9.4.1:NetBSD-10.0:amd64', None, 'netbsd'),
+            # without uname
+            (b'dhcpcd-9.4.1', None, None),
+            # Apple's current lists, then an older one without 121
+            (None, [1, 121, 3, 6, 15, 119, 108, 252, 114, 162, 95, 44, 46], 'macos'),
+            (None, [1, 121, 3, 6, 15, 119, 108, 252, 114, 162], 'ios'),
+            (None, [1, 3, 6, 15, 119, 95, 252, 44, 46], 'macos'),
+            # Windows 10 without its vendor class
+            (None, [1, 3, 6, 15, 31, 33, 43, 44, 46, 47, 119, 121, 249, 252], 'windows'),
+            # NetworkManager and ISC dhclient also ask for some of those
+            (None, [1, 2, 6, 12, 15, 26, 28, 121, 3, 33, 40, 41, 42, 119, 249, 252, 17], None),
+            (None, [1, 28, 2, 3, 15, 6, 119, 12, 44, 47, 26, 121, 42], None),
+            ]
+        for (vendor_class, params, expected) in cases:
+            with self.subTest(vendor_class=vendor_class, params=params):
+                host = PassiveMapper().process(dhcp_request(PEER_MAC, vendor_class=vendor_class, params=params))
+                self.assertEqual(expected, host.get('os'))
 
     def test_dhcp_reply_ignored(self):
         mapper = PassiveMapper()
