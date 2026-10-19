@@ -11,7 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef WIN32
+#ifdef WIN32
+ #include <ws2tcpip.h>
+#else
  #include <sys/socket.h>
  #include <netinet/in.h>
  #include <arpa/inet.h>

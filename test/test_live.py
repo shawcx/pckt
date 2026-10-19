@@ -128,12 +128,15 @@ def create_scenario(tmp):
     from pckt.capture import packets
 
     setup_link()
+    subprocess.run(['ip', '-6', 'addr', 'add', '2001:db8::1/64', 'dev', 'v0', 'nodad'], check=True)
+    results = {'ipv6': pcap.findalldevs()['v0'].get('ipv6', [])}
+
     rx = pcap.create('v1')
     rx.set_snaplen(64)
     rx.set_promisc(True)
     rx.set_timeout(100)
     rx.set_immediate_mode(True)
-    results = {'warning': rx.activate(), 'snapshot': rx.snapshot()}
+    results.update(warning=rx.activate(), snapshot=rx.snapshot())
     rx.setfilter('udp port 9999')
 
     frame = (Ethernet(src=pcap.mac('v0'), dst=pcap.mac('v1')) / IP(src='10.0.0.1', dst='10.0.0.2')
@@ -252,6 +255,8 @@ class TestLive(unittest.TestCase):
         self.assertEqual(sent[:64], bytes.fromhex(result['captured']))
         self.assertEqual(len(sent), result['wirelen'])
         self.assertIn("can't be changed after", result['set_after'])
+        # findalldevs() lists IPv6 addresses too
+        self.assertIn('2001:db8::1', result['ipv6'])
 
     @unittest.skipUnless(shutil.which('dnsmasq'), 'needs dnsmasq')
     def test_dhcp(self):
