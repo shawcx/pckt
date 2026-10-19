@@ -3,6 +3,7 @@ import struct
 from random import randrange
 
 from .layer import Layer, mac
+from .llc import LLC
 
 class Ethernet(Layer):
     PROTOS = {
@@ -24,7 +25,7 @@ class Ethernet(Layer):
     FIELDS = (
         ('dst',   b'\xff\xff\xff\xff\xff\xff'),
         ('src',   b'\x00\x00\x00\x00\x00\x00'),
-        ('proto', None), # payload's ETHERTYPE
+        ('proto', None), # payload's ETHERTYPE, or its length if it's LLC
     )
     MAC_FIELDS = ('dst', 'src')
 
@@ -35,18 +36,25 @@ class Ethernet(Layer):
 
     def unpack(self, pkt):
         (self.dst,self.src,self.proto) = struct.unpack('!6s6sH', pkt[:14])
+        if self.proto <= LLC.MAX_LENGTH:
+            # drop any padding past the length
+            return pkt[14:14 + self.proto]
         return pkt[14:]
 
     def next_layer(self):
+        if self.proto <= LLC.MAX_LENGTH:
+            return LLC
         return Layer.lookup('ETHERTYPE', self.proto)
 
     def build(self, data, outer):
         proto = self.proto
         if proto is None:
-            proto = getattr(self.payload, 'ETHERTYPE', 0)
+            proto = len(data) if isinstance(self.payload, LLC) else getattr(self.payload, 'ETHERTYPE', 0)
         return struct.pack('!6s6sH', mac(self.dst), mac(self.src), proto) + data
 
     def _fmt(self, name, value):
+        if 'proto' == name and value is not None and value <= LLC.MAX_LENGTH:
+            return '%d (length)' % value
         if 'proto' == name and value is not None:
             return '0x%.4x (%s)' % (value, Ethernet.PROTOS.get(value, 'unknown'))
         return Layer._fmt(self, name, value)

@@ -27,9 +27,9 @@ capture them with libpcap.
 Fields left unset are computed when packing; anything set explicitly is
 sent as-is, so malformed packets are easy to build on purpose.
 
-Layers: Ethernet, VLAN (802.1Q), ARP, LLDP, IP, IPv6, ICMP, ICMPv6 (echo,
-neighbor discovery), TCP, UDP, DHCP, DHCPv6, DNS (including mDNS and LLMNR),
-NetBIOS name service and SSDP.
+Layers: Ethernet (including 802.3 with LLC and SNAP), VLAN (802.1Q), ARP,
+LLDP, CDP, IP, IPv6, ICMP, ICMPv6 (echo, neighbor discovery), TCP, UDP, DHCP,
+DHCPv6, DNS (including mDNS and LLMNR), NetBIOS name service and SSDP.
 
 Devices
 -------
@@ -61,11 +61,13 @@ anything, from traffic that stays on the local link:
 
 - IPv4 addresses from ARP and DHCP requests, IPv6 addresses from neighbor
   discovery and DHCPv6
-- names from DHCP, DHCPv6, mDNS, LLMNR, NetBIOS name registrations and LLDP
+- names from DHCP, DHCPv6, mDNS, LLMNR, NetBIOS name registrations, LLDP and
+  CDP
 - the OS from DHCP and DHCPv6: the vendor class, or else which options a DHCP
   client asks for (Windows, macOS, iOS, Android, Linux); failing those, from
   the product a device announces over SSDP, or a browser searches with
-- descriptions, capabilities and management addresses from LLDP
+- descriptions, capabilities and management addresses from LLDP and CDP, and
+  the model from CDP
 - the vendor, from the MAC
 
 It prints a line whenever a host's details change::

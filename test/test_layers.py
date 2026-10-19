@@ -7,8 +7,9 @@ import unittest
 from pckt import (
     Layer, checksum, Ethernet, VLAN, ARP, IP, IPv6, ICMP, ICMP_EchoRequest, ICMP_EchoReply,
     ICMPv6, ICMPv6_EchoRequest, ICMPv6_EchoReply, ICMPv6_NeighborSolicit, ICMPv6_NeighborAdvert,
-    TCP, UDP, DHCP, DHCP_Request, DHCPv6, DHCPv6Relay, LLDP, SSDP,
+    TCP, UDP, DHCP, DHCP_Request, DHCPv6, DHCPv6Relay, LLDP, SSDP, LLC, SNAP, CDP,
     )
+from pckt.cdp import cdp_checksum
 
 
 def verifies(data):
@@ -547,6 +548,139 @@ class TestLLDP(unittest.TestCase):
     def test_default_not_shared(self):
         LLDP().tlvs.append((LLDP.TTL, b'\x00\x00'))
         self.assertEqual([], LLDP().tlvs)
+
+
+class TestLLC(unittest.TestCase):
+    def test_snap(self):
+        frame = (Ethernet() / LLC() / SNAP() / IP() / UDP() / b'x').pack()
+        # 802.3: the length in place of an ethertype, then SNAP with IP's ethertype
+        self.assertEqual(len(frame) - 14, struct.unpack('!H', frame[12:14])[0])
+        self.assertEqual(bytes.fromhex('aaaa03 000000 0800'), frame[14:22])
+        pkt = Ethernet.decode(frame)
+        self.assertEqual([Ethernet, LLC, SNAP, IP, UDP], [type(l) for l in pkt])
+        self.assertEqual(frame, pkt.pack())
+
+    def test_padding_dropped(self):
+        frame = (Ethernet() / LLC(dsap=0x42, ssap=0x42) / b'stp').pack()
+        pkt = Ethernet.decode(frame + bytes(60 - len(frame)))
+        # an unknown SAP's payload stays as bytes
+        self.assertEqual(b'stp', pkt[LLC].payload)
+
+    def test_two_byte_control(self):
+        # an information frame's control field has two bytes; its low bit is 0
+        data = LLC(dsap=0xf0, ssap=0xf0, control=0x0a02).pack()
+        self.assertEqual(bytes.fromhex('f0f0020a'), data)
+        self.assertEqual(0x0a02, LLC.decode(data).control)
+
+    def test_vlan(self):
+        frame = (Ethernet() / VLAN(id=5) / LLC() / SNAP() / CDP()).pack()
+        pkt = Ethernet.decode(frame)
+        self.assertEqual((5, 12), (pkt[VLAN].id, pkt[VLAN].proto))
+        self.assertIn(CDP, pkt)
+
+    def test_repr(self):
+        self.assertEqual('Ethernet(proto=12 (length))', repr(Ethernet(proto=12)))
+        self.assertEqual('LLC(dsap=0xaa, ssap=0xaa) / SNAP(oui=0x00000c, pid=0x2000)', repr(LLC.decode((LLC() / SNAP(oui=0x00000c, pid=0x2000)).pack())))
+
+
+# from Wireshark's cdp-BCM1100 sample
+CDP_BCM1100 = bytes.fromhex(
+    '01000ccccccc0060b9c140270048aaaa0300000c200002b47f3d0005000b42434d3131303000010010303036304239433134'
+    '30323700040008000000100006000c42434d3931313030000e0007010fff001000061900'
+    )
+
+# the CDP message from Wireshark's cdp_v2 sample: an odd length, ending in 0xfd
+CDP_V2 = bytes.fromhex(
+    '02b409a00001000c6d7973776974636800020011000000010101cc0004c0a800fd000300134661737445746865726e657430'
+    '2f31000400080000002800050114436973636f20496e7465726e6574776f726b204f7065726174696e672053797374656d20'
+    '536f667477617265200a494f532028746d2920433239353020536f667477617265202843323935302d49364b324c3251342d'
+    '4d292c2056657273696f6e2031322e3128323229454131342c2052454c4541534520534f4654574152452028666331290a54'
+    '6563686e6963616c20537570706f72743a20687474703a2f2f7777772e636973636f2e636f6d2f74656368737570706f7274'
+    '0a436f707972696768742028632920313938362d3230313020627920636973636f2053797374656d732c20496e632e0a436f'
+    '6d70696c6564205475652032362d4f63742d31302031303a3335206279206e627572726100060015636973636f2057532d43'
+    '323935302d31320008002400000c011200000000ffffffff010220ff000000000000000bbe189a40ff00000009000c4d5944'
+    '4f4d41494e000a00060001000b0005010012000500001300050000160011000000010101cc0004c0a800fd'
+    )
+
+
+def cdp_addresses(*addrs):
+    '''an addresses TLV's value'''
+    value = struct.pack('!I', len(addrs))
+    for addr in addrs:
+        if ':' in addr:
+            value += struct.pack('!BB8sH16s', 2, 8, bytes.fromhex('aaaa0300000086dd'), 16, socket.inet_pton(socket.AF_INET6, addr))
+        else:
+            value += struct.pack('!BBBH4s', 1, 1, 0xcc, 4, socket.inet_aton(addr))
+    return value
+
+
+def cdp_router():
+    '''what a Cisco router sends'''
+    return CDP(tlvs=[
+        (CDP.DEVICE_ID, b'R1.example.com'),
+        (CDP.ADDRESSES, cdp_addresses('10.0.0.1', '2001:db8::1')),
+        (CDP.PORT_ID, b'GigabitEthernet0/1'),
+        # router, switch, IGMP
+        (CDP.CAPABILITIES, struct.pack('!I', 0x29)),
+        (CDP.SOFTWARE_VERSION, b'Cisco IOS Software, C2900 Software (C2900-UNIVERSALK9-M), Version 15.7(3)M8\nCopyright (c) 1986-2021'),
+        (CDP.PLATFORM, b'Cisco CISCO2911/K9'),
+        (CDP.MANAGEMENT_ADDRESSES, cdp_addresses('10.0.0.1')),
+        ])
+
+
+class TestCDP(unittest.TestCase):
+    def test_decode(self):
+        pkt = Ethernet.decode(CDP_BCM1100)
+        self.assertEqual((CDP.MULTICAST, 72), (pkt.dst, pkt.proto))
+        self.assertEqual((LLC.SNAP, LLC.SNAP, LLC.UI), (pkt[LLC].dsap, pkt[LLC].ssap, pkt[LLC].control))
+        cdp = pkt[CDP]
+        self.assertEqual((2, 180, 0x7f3d), (cdp.version, cdp.ttl, cdp.crc))
+        self.assertEqual((b'0060B9C14027', b'BCM91100', ['host']), (cdp.tlv(CDP.DEVICE_ID), cdp.tlv(CDP.PLATFORM), cdp.capabilities()))
+        self.assertEqual([], cdp.addresses())
+        self.assertEqual(CDP_BCM1100, pkt.pack())
+
+    def test_checksum(self):
+        for data in (CDP_BCM1100[22:], CDP_V2):
+            cdp = CDP.decode(data)
+            cdp.crc = None
+            self.assertEqual(data, cdp.pack())
+        # odd, ending below 0x80, as tshark verifies it
+        self.assertEqual(0x9b7e, CDP.decode(CDP(tlvs=[(CDP.DEVICE_ID, b'abc')]).pack()).crc)
+        self.assertEqual(cdp_checksum(b'\x12\x34\x56'), checksum(b'\x12\x34\x00\x56'))
+
+    def test_build(self):
+        frame = (Ethernet(dst=CDP.MULTICAST) / LLC() / SNAP() / cdp_router()).pack()
+        self.assertEqual(bytes.fromhex('aaaa03 00000c 2000'), frame[14:22])
+        cdp = Ethernet.decode(frame)[CDP]
+        self.assertEqual(['10.0.0.1', '2001:db8::1'], cdp.addresses())
+        self.assertEqual(['10.0.0.1'], cdp.addresses(CDP.MANAGEMENT_ADDRESSES))
+        self.assertEqual(['router', 'switch', 'igmp'], cdp.capabilities())
+        self.assertEqual(frame, Ethernet.decode(frame).pack())
+
+    def test_malformed_fields(self):
+        cdp = CDP(tlvs=[
+            (CDP.CAPABILITIES, b'\x01'),
+            # two addresses claimed, the second an IPv4 one that's too short
+            (CDP.ADDRESSES, cdp_addresses('10.0.0.1', '10.0.0.2')[:-1]),
+            # an unknown protocol
+            (CDP.MANAGEMENT_ADDRESSES, struct.pack('!IBBBH', 1, 1, 1, 0x81, 0)),
+            ])
+        self.assertEqual([], cdp.capabilities())
+        self.assertEqual(['10.0.0.1'], cdp.addresses())
+        self.assertEqual([], cdp.addresses(CDP.MANAGEMENT_ADDRESSES))
+
+    def test_truncated(self):
+        data = CDP_V2[:-3]
+        with self.assertRaises(struct.error):
+            CDP.decode(data)
+        # inside a frame it's kept as bytes
+        pkt = Ethernet.decode((Ethernet() / LLC() / SNAP(oui=0x00000c, pid=0x2000) / data).pack())
+        self.assertNotIn(CDP, pkt)
+        self.assertEqual(data, pkt[SNAP].payload)
+
+    def test_default_not_shared(self):
+        CDP().tlvs.append((CDP.DEVICE_ID, b'x'))
+        self.assertEqual([], CDP().tlvs)
 
 
 if '__main__' == __name__:

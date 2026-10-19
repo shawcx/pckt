@@ -10,7 +10,7 @@ import unittest
 
 from pckt import (
     checksum, Ethernet, ARP, IP, IPv6, ICMP, ICMP_EchoRequest, ICMP_EchoReply, ICMPv6, ICMPv6_EchoRequest,
-    ICMPv6_NeighborSolicit, ICMPv6_NeighborAdvert, UDP, DHCP, DHCPv6, DNS, DNSQuestion, DNSRR, NBNS, SSDP, LLDP,
+    ICMPv6_NeighborSolicit, ICMPv6_NeighborAdvert, UDP, DHCP, DHCPv6, DNS, DNSQuestion, DNSRR, NBNS, SSDP, LLDP, LLC, SNAP, CDP,
     )
 from pckt.stack.ghost import Ghost, BROADCAST, DHCP_RETRY
 from pckt.mapping.passive import PassiveMapper, describe, ssdp_os
@@ -21,7 +21,7 @@ except ImportError:
     pcap = None
 
 from test_pcap import write_pcap
-from test_layers import lldp_switch, fqdn_option, ssdp_notify, CHROME_SEARCH
+from test_layers import lldp_switch, fqdn_option, ssdp_notify, CHROME_SEARCH, cdp_router
 
 GHOST_MAC = bytes.fromhex('020000000001')
 PEER_MAC = bytes.fromhex('00505600aabb')  # VMware prefix, for the vendor lookup
@@ -217,6 +217,10 @@ def dhcpv6_from(mac, kind=DHCPv6.SOLICIT, options=(), dst='33:33:00:01:00:02'):
 def ssdp_from(mac, src, msg):
     dst = SSDP.MULTICAST6 if ':' in src else SSDP.MULTICAST
     return (Ethernet(src=mac, dst='01:00:5e:7f:ff:fa') / (IPv6 if ':' in src else IP)(src=src, dst=dst) / UDP() / msg).pack()
+
+
+def cdp_from(mac, cdp):
+    return (Ethernet(dst=CDP.MULTICAST, src=mac) / LLC() / SNAP() / cdp).pack()
 
 
 MSFT_VENDOR_CLASS = (DHCPv6.VENDOR_CLASS, struct.pack('!IH', 311, 8) + b'MSFT 5.0')
@@ -458,6 +462,38 @@ class TestPassive(unittest.TestCase):
         host = PassiveMapper().process((Ethernet(dst=LLDP.MULTICAST, src=PEER_MAC) / lldp).pack())
         self.assertEqual(('00:50:56:00:aa:bb', 'server1'), (host['mac'], host['name']))
 
+    def test_cdp(self):
+        mapper = PassiveMapper()
+        host = mapper.process(cdp_from(SERVER_MAC, cdp_router()))
+        self.assertEqual(('R1.example.com', '10.0.0.1', ['2001:db8::1'], 'Cisco CISCO2911/K9', ['router', 'switch', 'igmp']),
+                         (host['name'], host['ip'], host['ipv6'], host['platform'], host['capabilities']))
+        self.assertIn('[router,switch,igmp] (Cisco CISCO2911/K9) "Cisco IOS Software, C2900 Software', describe(host))
+        # sent again a minute later
+        self.assertIsNone(mapper.process(cdp_from(SERVER_MAC, cdp_router())))
+
+    def test_cdp_system_name(self):
+        # NX-OS adds its serial number to the device ID, but not the system name
+        cdp = CDP(tlvs=[(CDP.DEVICE_ID, b'N9K-1(FDO21110A1B)'), (CDP.SYSTEM_NAME, b'N9K-1')])
+        self.assertEqual('N9K-1', PassiveMapper().process(cdp_from(SERVER_MAC, cdp))['name'])
+
+    def test_cdp_fills_in(self):
+        # e.g. lldpd, which can send both
+        lldp = (Ethernet(dst=LLDP.MULTICAST, src=PEER_MAC) / LLDP(tlvs=[
+            (LLDP.CHASSIS_ID, bytes([LLDP.CHASSIS_LOCAL]) + b'server1'), (LLDP.SYSTEM_NAME, b'server1'),
+            (LLDP.SYSTEM_CAPABILITIES, struct.pack('!HH', 0x80, 0x80))])).pack()
+        cdp = cdp_from(PEER_MAC, CDP(tlvs=[(CDP.DEVICE_ID, b'server1.example.com'), (CDP.CAPABILITIES, struct.pack('!I', 0x10)),
+                                           (CDP.PLATFORM, b'Linux')]))
+        mapper = PassiveMapper()
+        mapper.process(lldp)
+        # only what LLDP didn't say
+        host = mapper.process(cdp)
+        self.assertEqual(('server1', ['station'], 'Linux'), (host['name'], host['capabilities'], host['platform']))
+        # the other way round, LLDP replaces CDP's, which then stay replaced
+        mapper = PassiveMapper()
+        mapper.process(cdp)
+        self.assertEqual('server1', mapper.process(lldp)['name'])
+        self.assertIsNone(mapper.process(cdp))
+
     def test_describe(self):
         mapper = PassiveMapper()
         mapper.process(arp_from(PEER_MAC, '10.0.0.7'))
@@ -490,6 +526,7 @@ class TestPassive(unittest.TestCase):
                 llmnr_from(bytes.fromhex('00155d000002'), '10.0.0.12', [DNSRR('desktop', DNS.A, ttl=30, data='10.0.0.12')]),
                 dhcpv6_from(bytes.fromhex('00155d000003'), options=[(DHCPv6.CLIENT_FQDN, fqdn_option(b'workstation'))]),
                 ssdp_from(bytes.fromhex('00155d000004'), '10.0.0.1', ssdp_notify()),
+                cdp_from(bytes.fromhex('00000c000005'), cdp_router()),
                 ])
             root = os.path.dirname(os.path.dirname(pcap.__file__))
             result = subprocess.run(
@@ -498,7 +535,7 @@ class TestPassive(unittest.TestCase):
                 )
         self.assertEqual(0, result.returncode, result.stderr)
         lines = result.stdout.splitlines()
-        self.assertEqual(9, len(lines))
+        self.assertEqual(10, len(lines))
         self.assertIn('10.0.0.7', lines[0])
         self.assertIn('laptop', lines[1])
         self.assertIn('fe80::1', lines[2])
@@ -508,6 +545,7 @@ class TestPassive(unittest.TestCase):
         self.assertIn('desktop', lines[6])
         self.assertIn('workstation', lines[7])
         self.assertIn('linux', lines[8])
+        self.assertIn('R1.example.com', lines[9])
 
 
 if '__main__' == __name__:

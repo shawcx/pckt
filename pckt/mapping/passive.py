@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 '''
 Passively map hosts on the local network from ARP, DHCP, DHCPv6, IPv6
-neighbor discovery, mDNS, LLMNR, NetBIOS name service, SSDP and LLDP traffic.
+neighbor discovery, mDNS, LLMNR, NetBIOS name service, SSDP, LLDP and CDP
+traffic.
 
     sudo python3 -m pckt.mapping.passive eth0
     python3 -m pckt.mapping.passive --file capture.pcap
@@ -19,7 +20,7 @@ from urllib.parse import urlsplit
 
 from pckt.capture import packets
 from pckt import (
-    pcap, vendor, Ethernet, ARP, IP, IPv6, ICMPv6, ICMPv6_NeighborAdvert, UDP, DHCP, DHCPv6, DNS, NBNS, SSDP, LLDP,
+    pcap, vendor, Ethernet, ARP, IP, IPv6, ICMPv6, ICMPv6_NeighborAdvert, UDP, DHCP, DHCPv6, DNS, NBNS, SSDP, LLDP, CDP,
     )
 
 UNSPECIFIED = '0.0.0.0'
@@ -33,7 +34,7 @@ NEIGHBOR_DISCOVERY = range(133, 137)
 
 class PassiveMapper:
     def __init__(self):
-        # 'aa:bb:cc:dd:ee:ff' => {'mac', 'vendor', 'ip', 'ipv6', 'name', 'os', 'description', 'capabilities'};
+        # 'aa:bb:cc:dd:ee:ff' => {'mac', 'vendor', 'ip', 'ipv6', 'name', 'os', 'platform', 'description', 'capabilities'};
         # ipv6 and capabilities are lists
         self.hosts = {}
 
@@ -60,6 +61,8 @@ class PassiveMapper:
             (addr, fields) = self.from_ssdp(pkt[Ethernet].src, pkt, pkt[SSDP])
         elif LLDP in pkt:
             (addr, fields) = self.from_lldp(pkt[Ethernet].src, pkt[LLDP])
+        elif CDP in pkt:
+            (addr, fields) = self.from_cdp(pkt[Ethernet].src, pkt[CDP])
         else:
             return None
 
@@ -244,6 +247,35 @@ class PassiveMapper:
                 fields.setdefault('ip', addr)
         return (src, fields)
 
+    def from_cdp(self, src, msg):
+        '''
+        a Cisco device's name, platform, software, capabilities and
+        addresses; devices that also send LLDP say much the same in its
+        terms, so CDP only fills in what LLDP and the other sources haven't
+        '''
+        fields = {}
+        # NX-OS's device ID includes its serial number; its system name doesn't
+        name = msg.tlv(CDP.SYSTEM_NAME) or msg.tlv(CDP.DEVICE_ID)
+        if name:
+            fields['name'] = name.decode('utf-8', 'replace')
+        for (kind, field) in ((CDP.PLATFORM, 'platform'), (CDP.SOFTWARE_VERSION, 'description')):
+            value = msg.tlv(kind)
+            if value:
+                fields[field] = value.decode('utf-8', 'replace')
+        capabilities = msg.capabilities()
+        if capabilities:
+            fields['capabilities'] = capabilities
+        # the sending interface's addresses, then the device's management ones
+        for addr in msg.addresses() + msg.addresses(CDP.MANAGEMENT_ADDRESSES):
+            if ':' not in addr:
+                fields.setdefault('ip', addr)
+            elif addr not in fields.setdefault('ipv6', []):
+                fields['ipv6'].append(addr)
+
+        # ipv6 is added to, not replaced
+        known = self.hosts.get(macstr(src), {})
+        return (src, {name: value for (name, value) in fields.items() if 'ipv6' == name or name not in known})
+
 
 # clients that name themselves in the vendor class (option 60)
 VENDOR_CLASSES = (
@@ -322,6 +354,8 @@ def describe(host):
     extra = list(host.get('ipv6', []))
     if host.get('capabilities'):
         extra.append('[%s]' % ','.join(host['capabilities']))
+    if host.get('platform'):
+        extra.append('(%s)' % host['platform'])
     if host.get('description'):
         # some (e.g. Cisco's) span several lines
         extra.append('"%s"' % ' '.join(host['description'].split()))
@@ -347,8 +381,8 @@ def main():
     else:
         pd = pcap.open_live(args.device, 65535, True, 100)
     ports = (67, 68, 137, 546, 547, 1900, MDNS_PORT, LLMNR_PORT)
-    pd.setfilter('arp or icmp6 or ether proto 0x%x or (udp and (%s))' % (
-        LLDP.ETHERTYPE, ' or '.join('port %d' % port for port in ports)))
+    pd.setfilter('arp or icmp6 or ether proto 0x%x or ether dst %s or (udp and (%s))' % (
+        LLDP.ETHERTYPE, macstr(CDP.MULTICAST), ' or '.join('port %d' % port for port in ports)))
 
     mapper = PassiveMapper()
     try:

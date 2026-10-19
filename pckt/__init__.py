@@ -7,7 +7,9 @@ from .layer import Layer, checksum, mac
 from .ethernet import Ethernet
 from .vlan     import VLAN
 
+from .llc  import LLC, SNAP
 from .arp  import ARP
+from .cdp  import CDP
 from .lldp import LLDP
 from .ip   import IP
 from .ipv6 import IPv6
