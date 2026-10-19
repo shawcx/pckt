@@ -149,10 +149,25 @@ static PyObject * PyPCAP_mac(PyObject *self, PyObject *args) {
     return PyBytes_FromStringAndSize((char *)mac, 6);
 }
 
+// appends addr to the list under key in addrdict, creating the list
+static void append_address(PyObject *addrdict, const char *key, const char *addr) {
+    PyObject *addrlist;
+    PyObject *value;
+
+    addrlist = PyDict_GetItemString(addrdict, key);
+    if(!addrlist) {
+        addrlist = PyList_New(0);
+        PyDict_SetItemString(addrdict, key, addrlist);
+        Py_DECREF(addrlist);
+    }
+    value = PyUnicode_FromString(addr);
+    PyList_Append(addrlist, value);
+    Py_DECREF(value);
+}
+
 static PyObject * PyPCAP_findalldevs(PyObject *self) {
     PyObject *devdict;
     PyObject *addrdict;
-    PyObject *addrlist;
     PyObject *value;
 
     pcap_if_t *devices;
@@ -201,12 +216,17 @@ static PyObject * PyPCAP_findalldevs(PyObject *self) {
             sa = address->addr;
             switch(sa->sa_family) {
             case AF_INET:
-                if(address->addr) {
-                    sai = (struct sockaddr_in *)address->addr;
-                    value = PyUnicode_FromString(inet_ntoa(sai->sin_addr));
-                    PyDict_SetItemString(addrdict, "ip", value);
-                    Py_DECREF(value);
+                sai = (struct sockaddr_in *)address->addr;
+                append_address(addrdict, "ipv4", inet_ntoa(sai->sin_addr));
+
+                // ip, netmask and broadcast are the first address's
+                if(PyDict_GetItemString(addrdict, "ip")) {
+                    break;
                 }
+
+                value = PyUnicode_FromString(inet_ntoa(sai->sin_addr));
+                PyDict_SetItemString(addrdict, "ip", value);
+                Py_DECREF(value);
 
                 if(address->netmask) {
                     sai = (struct sockaddr_in *)address->netmask;
@@ -229,16 +249,7 @@ static PyObject * PyPCAP_findalldevs(PyObject *self) {
                     break;
                 }
 
-                // an interface usually has several, so they're a list
-                addrlist = PyDict_GetItemString(addrdict, "ipv6");
-                if(!addrlist) {
-                    addrlist = PyList_New(0);
-                    PyDict_SetItemString(addrdict, "ipv6", addrlist);
-                    Py_DECREF(addrlist);
-                }
-                value = PyUnicode_FromString(addr6);
-                PyList_Append(addrlist, value);
-                Py_DECREF(value);
+                append_address(addrdict, "ipv6", addr6);
                 break;
             }
 
