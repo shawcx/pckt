@@ -2,6 +2,7 @@
 
 import os
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -9,7 +10,7 @@ import unittest
 
 from pckt import (
     checksum, Ethernet, ARP, IP, IPv6, ICMP, ICMP_EchoRequest, ICMP_EchoReply, ICMPv6, ICMPv6_EchoRequest,
-    ICMPv6_NeighborSolicit, ICMPv6_NeighborAdvert, UDP, DHCP, DNS, DNSRR, LLDP,
+    ICMPv6_NeighborSolicit, ICMPv6_NeighborAdvert, UDP, DHCP, DHCPv6, DNS, DNSQuestion, DNSRR, NBNS, LLDP,
     )
 from pckt.stack.ghost import Ghost, BROADCAST, DHCP_RETRY
 from pckt.mapping.passive import PassiveMapper, describe
@@ -20,7 +21,7 @@ except ImportError:
     pcap = None
 
 from test_pcap import write_pcap
-from test_layers import lldp_switch
+from test_layers import lldp_switch, fqdn_option
 
 GHOST_MAC = bytes.fromhex('020000000001')
 PEER_MAC = bytes.fromhex('00505600aabb')  # VMware prefix, for the vendor lookup
@@ -195,6 +196,27 @@ def address_records(name, *addrs):
     return [DNSRR(name, DNS.AAAA if ':' in a else DNS.A, DNS.IN | CACHE_FLUSH, 120, a) for a in addrs]
 
 
+def nbns_from(mac, ip, name, suffix=NBNS.WORKSTATION, flags=0, addr=None, dst=BROADCAST):
+    '''a broadcast registration of a name'''
+    encoded = NBNS.encode_name(name, suffix)
+    msg = NBNS(opcode=NBNS.REGISTRATION, broadcast=1, questions=[DNSQuestion(encoded, NBNS.NB)],
+               additional=[DNSRR(encoded, NBNS.NB, NBNS.IN, 300000, [(flags, addr or ip)])])
+    return (Ethernet(src=mac, dst=dst) / IP(src=ip, dst='10.0.0.255') / UDP() / msg).pack()
+
+
+def llmnr_from(mac, src, records, qr=1, rcode=0):
+    '''a response, unicast to whoever asked'''
+    ip = IPv6(src=src, dst='fe80::9') if ':' in src else IP(src=src, dst='10.0.0.9')
+    return (Ethernet(src=mac, dst=GHOST_MAC) / ip / UDP(src=5355, dst=50000) / DNS(qr=qr, rd=0, rcode=rcode, answers=records)).pack()
+
+
+def dhcpv6_from(mac, kind=DHCPv6.SOLICIT, options=(), dst='33:33:00:01:00:02'):
+    return (Ethernet(src=mac, dst=dst) / IPv6(src='fe80::7', dst='ff02::1:2') / UDP() / DHCPv6(type=kind, options=list(options))).pack()
+
+
+MSFT_VENDOR_CLASS = (DHCPv6.VENDOR_CLASS, struct.pack('!IH', 311, 8) + b'MSFT 5.0')
+
+
 class TestPassive(unittest.TestCase):
     def test_arp(self):
         mapper = PassiveMapper()
@@ -283,6 +305,75 @@ class TestPassive(unittest.TestCase):
         host = PassiveMapper().process(mdns_from(PEER_MAC, '10.0.0.7', address_records(name, '10.0.0.7')))
         self.assertEqual('Mätt-Laptop', host['name'])
 
+    def test_nbns(self):
+        mapper = PassiveMapper()
+        host = mapper.process(nbns_from(PEER_MAC, '10.0.0.7', 'DESKTOP-AB12'))
+        self.assertEqual(('DESKTOP-AB12', '10.0.0.7'), (host['name'], host['ip']))
+        # its file server name is the same
+        self.assertIsNone(mapper.process(nbns_from(PEER_MAC, '10.0.0.7', 'DESKTOP-AB12', NBNS.SERVER)))
+
+    def test_nbns_ignored(self):
+        mapper = PassiveMapper()
+        query = NBNS(broadcast=1, questions=[DNSQuestion(NBNS.encode_name('DESKTOP-AB12'), NBNS.NB)])
+        frames = [
+            # a workgroup is a group name; its master browser's name is unique but still the workgroup's
+            nbns_from(PEER_MAC, '10.0.0.7', 'WORKGROUP', flags=NBNS.GROUP),
+            nbns_from(PEER_MAC, '10.0.0.7', 'WORKGROUP', 0x1d),
+            # the messenger service's names include the user's
+            nbns_from(PEER_MAC, '10.0.0.7', 'MATT', 0x03),
+            # for another address
+            nbns_from(PEER_MAC, '10.0.0.7', 'OTHER', addr='10.0.0.8'),
+            # unicast to a WINS server, maybe from another subnet through a router
+            nbns_from(SERVER_MAC, '10.9.0.7', 'REMOTE', dst=GHOST_MAC),
+            (Ethernet(src=PEER_MAC) / IP(src='10.0.0.7') / UDP() / query).pack(),
+            ]
+        for frame in frames:
+            self.assertIsNone(mapper.process(frame))
+        self.assertEqual({}, mapper.hosts)
+
+    def test_name_case(self):
+        mapper = PassiveMapper()
+        mapper.process(dhcp_request(PEER_MAC, name=b'Desktop-AB12'))
+        # NetBIOS's upper case name is the same one
+        self.assertIsNone(mapper.process(nbns_from(PEER_MAC, '10.0.0.50', 'DESKTOP-AB12')))
+        self.assertEqual('Desktop-AB12', mapper.hosts['00:50:56:00:aa:bb']['name'])
+        self.assertEqual('laptop', mapper.process(dhcp_request(PEER_MAC, name=b'laptop'))['name'])
+
+    def test_llmnr(self):
+        mapper = PassiveMapper()
+        host = mapper.process(llmnr_from(PEER_MAC, '10.0.0.7', [DNSRR('desktop-ab12', DNS.A, ttl=30, data='10.0.0.7')]))
+        self.assertEqual(('desktop-ab12', '10.0.0.7'), (host['name'], host['ip']))
+        host = mapper.process(llmnr_from(PEER_MAC, 'fe80::7', [DNSRR('desktop-ab12', DNS.AAAA, ttl=30, data='fe80::7')]))
+        self.assertEqual(['fe80::7'], host['ipv6'])
+
+    def test_llmnr_ignored(self):
+        mapper = PassiveMapper()
+        records = [DNSRR('desktop-ab12', DNS.A, ttl=30, data='10.0.0.7')]
+        # from another address, a query, and an error
+        self.assertIsNone(mapper.process(llmnr_from(SERVER_MAC, '10.0.0.9', records)))
+        self.assertIsNone(mapper.process(llmnr_from(PEER_MAC, '10.0.0.7', records, qr=0)))
+        self.assertIsNone(mapper.process(llmnr_from(PEER_MAC, '10.0.0.7', records, rcode=DNS.SERVFAIL)))
+        self.assertEqual({}, mapper.hosts)
+
+    def test_dhcpv6(self):
+        mapper = PassiveMapper()
+        options = [(DHCPv6.CLIENT_FQDN, fqdn_option(b'DESKTOP-AB12', b'corp', b'example')), MSFT_VENDOR_CLASS]
+        host = mapper.process(dhcpv6_from(PEER_MAC, options=options))
+        self.assertEqual(('DESKTOP-AB12', 'windows', ['fe80::7']), (host['name'], host['os'], host['ipv6']))
+        # dhcpcd sends the same vendor class as for DHCP, under its own enterprise number
+        vendor_class = b'dhcpcd-10.0.6:Linux-6.6.31+rpt-rpi-v8:aarch64:BCM2835'
+        options = [(DHCPv6.VENDOR_CLASS, struct.pack('!IH', 40712, len(vendor_class)) + vendor_class)]
+        self.assertEqual('linux', mapper.process(dhcpv6_from(SERVER_MAC, DHCPv6.INFORMATION_REQUEST, options))['os'])
+
+    def test_dhcpv6_ignored(self):
+        mapper = PassiveMapper()
+        options = [(DHCPv6.CLIENT_FQDN, fqdn_option(b'laptop')), MSFT_VENDOR_CLASS]
+        # a server's reply echoes the client's name
+        self.assertIsNone(mapper.process(dhcpv6_from(SERVER_MAC, DHCPv6.REPLY, options)))
+        # a renewal unicast to a server may have come from another subnet through a router
+        self.assertIsNone(mapper.process(dhcpv6_from(SERVER_MAC, DHCPv6.RENEW, options, dst=GHOST_MAC)))
+        self.assertEqual({}, mapper.hosts)
+
     def test_lldp(self):
         mapper = PassiveMapper()
         host = mapper.process((Ethernet(dst=LLDP.MULTICAST, src='00:11:22:33:44:02') / lldp_switch()).pack())
@@ -330,6 +421,9 @@ class TestPassive(unittest.TestCase):
                 ndp_from(GHOST_MAC, 'fe80::1', ICMPv6_NeighborSolicit(target='fe80::2')),
                 mdns_from(PEER_MAC, '10.0.0.7', address_records('printer.local', '10.0.0.7')),
                 (Ethernet(dst=LLDP.MULTICAST, src='00:11:22:33:44:02') / lldp_switch()).pack(),
+                nbns_from(bytes.fromhex('00155d000001'), '10.0.0.11', 'FILESERVER'),
+                llmnr_from(bytes.fromhex('00155d000002'), '10.0.0.12', [DNSRR('desktop', DNS.A, ttl=30, data='10.0.0.12')]),
+                dhcpv6_from(bytes.fromhex('00155d000003'), options=[(DHCPv6.CLIENT_FQDN, fqdn_option(b'workstation'))]),
                 ])
             root = os.path.dirname(os.path.dirname(pcap.__file__))
             result = subprocess.run(
@@ -338,12 +432,15 @@ class TestPassive(unittest.TestCase):
                 )
         self.assertEqual(0, result.returncode, result.stderr)
         lines = result.stdout.splitlines()
-        self.assertEqual(5, len(lines))
+        self.assertEqual(8, len(lines))
         self.assertIn('10.0.0.7', lines[0])
         self.assertIn('laptop', lines[1])
         self.assertIn('fe80::1', lines[2])
         self.assertIn('printer', lines[3])
         self.assertIn('core-sw', lines[4])
+        self.assertIn('FILESERVER', lines[5])
+        self.assertIn('desktop', lines[6])
+        self.assertIn('workstation', lines[7])
 
 
 if '__main__' == __name__:

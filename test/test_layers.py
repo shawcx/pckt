@@ -7,7 +7,7 @@ import unittest
 from pckt import (
     Layer, checksum, Ethernet, VLAN, ARP, IP, IPv6, ICMP, ICMP_EchoRequest, ICMP_EchoReply,
     ICMPv6, ICMPv6_EchoRequest, ICMPv6_EchoReply, ICMPv6_NeighborSolicit, ICMPv6_NeighborAdvert,
-    TCP, UDP, DHCP, DHCP_Request, LLDP,
+    TCP, UDP, DHCP, DHCP_Request, DHCPv6, DHCPv6Relay, LLDP,
     )
 
 
@@ -325,6 +325,88 @@ class TestDHCP(unittest.TestCase):
         a = DHCP()
         a.options.append((1, b'x'))
         self.assertEqual([], DHCP().options)
+
+
+# from Wireshark's DHCPv6 sample: a solicit with a client ID, option request,
+# elapsed time and a prefix delegation
+DHCPV6_SOLICIT = bytes.fromhex(
+    '011008740001000e000100011c39cf88080027fe8f9500060004001700180008000200000019000c27fe8f9500000e1000001518'
+    )
+
+
+def fqdn_option(*labels, partial=False):
+    '''client FQDN option value: flags (S, the server updates AAAA records), then the name as DNS labels'''
+    return b'\x01' + b''.join(bytes([len(label)]) + label for label in labels) + (b'' if partial else b'\x00')
+
+
+class TestDHCPv6(unittest.TestCase):
+    def test_decode(self):
+        msg = DHCPv6.decode(DHCPV6_SOLICIT)
+        self.assertEqual((DHCPv6.SOLICIT, 0x100874), (msg.type, msg.transid))
+        self.assertEqual([DHCPv6.CLIENT_ID, DHCPv6.ORO, DHCPv6.ELAPSED_TIME, DHCPv6.IA_PD], [code for (code, value) in msg.options])
+        self.assertEqual(b'\x00\x17\x00\x18', msg.option(DHCPv6.ORO))
+        self.assertIsNone(msg.option(DHCPv6.CLIENT_FQDN))
+        self.assertEqual(DHCPV6_SOLICIT, msg.pack())
+
+    def test_udp_ports(self):
+        for (kind, ports) in ((DHCPv6.SOLICIT, (546, 547)), (DHCPv6.INFORMATION_REQUEST, (546, 547)), (DHCPv6.REPLY, (547, 546))):
+            data = (IPv6() / UDP() / DHCPv6(type=kind)).pack()
+            self.assertEqual(ports, struct.unpack('!HH', data[40:44]), kind)
+        pkt = Ethernet.decode((Ethernet() / IPv6() / UDP() / DHCPv6()).pack())
+        self.assertEqual([Ethernet, IPv6, UDP, DHCPv6], [type(l) for l in pkt])
+
+    def test_raw_option_entries(self):
+        self.assertEqual(DHCPv6(options=[b'\x00\x08\x00\x02\x00\x00']).pack(), DHCPv6(options=[(DHCPv6.ELAPSED_TIME, b'\x00\x00')]).pack())
+
+    def test_fqdn(self):
+        cases = [
+            (fqdn_option(b'DESKTOP-AB12', b'corp', b'example'), 'DESKTOP-AB12.corp.example'),
+            # just the host name, which needn't be terminated
+            (fqdn_option(b'laptop', partial=True), 'laptop'),
+            (fqdn_option(b'laptop'), 'laptop'),
+            # flags only, an overlong label, and a truncated one
+            (b'\x01', None),
+            (b'\x01\x40' + b'x' * 64, None),
+            (b'\x01\x08laptop', None),
+            ]
+        for (value, name) in cases:
+            with self.subTest(value=value):
+                self.assertEqual(name, DHCPv6(options=[(DHCPv6.CLIENT_FQDN, value)]).fqdn())
+        self.assertIsNone(DHCPv6().fqdn())
+
+    def test_vendor_classes(self):
+        msg = DHCPv6(options=[
+            (DHCPv6.VENDOR_CLASS, struct.pack('!IH', 311, 8) + b'MSFT 5.0'),
+            (DHCPv6.VENDOR_CLASS, struct.pack('!IH', 40712, 1) + b'a' + struct.pack('!H', 2) + b'bc'),
+            # truncated data, and too short for an enterprise number
+            (DHCPv6.VENDOR_CLASS, struct.pack('!IH', 9, 5) + b'abc'),
+            (DHCPv6.VENDOR_CLASS, b'\x00\x00'),
+            ])
+        self.assertEqual([(311, [b'MSFT 5.0']), (40712, [b'a', b'bc']), (9, [])], msg.vendor_classes())
+
+    def test_relay(self):
+        inner = DHCPv6(transid=1).pack()
+        relay = DHCPv6Relay(hops=1, link='2001:db8::1', peer='fe80::7', options=[(DHCPv6.RELAY_MSG, inner)])
+        frame = (Ethernet() / IPv6() / UDP() / relay).pack()
+        self.assertEqual((547, 547), struct.unpack('!HH', frame[54:58]))
+        msg = Ethernet.decode(frame)[DHCPv6]
+        self.assertIsInstance(msg, DHCPv6Relay)
+        self.assertEqual((DHCPv6.RELAY_FORW, 1, '2001:db8::1', 'fe80::7'), (msg.type, msg.hops, msg.link, msg.peer))
+        self.assertEqual(1, DHCPv6.decode(msg.option(DHCPv6.RELAY_MSG)).transid)
+        self.assertEqual(frame, Ethernet.decode(frame).pack())
+
+    def test_truncated(self):
+        data = DHCPV6_SOLICIT[:-2]
+        with self.assertRaises(struct.error):
+            DHCPv6.decode(data)
+        # inside a frame it's kept as bytes
+        pkt = Ethernet.decode((Ethernet() / IPv6() / UDP(src=546, dst=547) / data).pack())
+        self.assertNotIn(DHCPv6, pkt)
+        self.assertEqual(data, pkt[UDP].payload)
+
+    def test_options_not_shared(self):
+        DHCPv6().options.append((1, b'x'))
+        self.assertEqual([], DHCPv6().options)
 
 
 def lldp_switch(port_mac=b'\x00\x11\x22\x33\x44\x02'):
