@@ -7,7 +7,7 @@ name = "pckt"
 version = "0.1"
 description = "Packet construction and decoding, with libpcap bindings"
 readme = "README.rst"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 # set in setup.py: the "MIT" expression form needs setuptools 77, newer than Ubuntu 24.04's,
 # and 77 and later deprecate the {text = "MIT"} table form
 dynamic = ["license"]
