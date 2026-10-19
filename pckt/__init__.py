@@ -19,7 +19,11 @@ from .icmpv6 import ICMPv6, ICMPv6_EchoRequest, ICMPv6_EchoReply, ICMPv6_Neighbo
 from .tcp  import TCP
 from .udp  import UDP
 
-from .layer7 import DHCP, DHCP_Request, DHCPv6, DHCPv6Relay, DNS, DNSQuestion, DNSRR, NBNS, SSDP
+from .dhcp    import DHCP, DHCP_Request
+from .dhcpv6  import DHCPv6, DHCPv6Relay
+from .dns     import DNS, DNSQuestion, DNSRR
+from .netbios import NBNS
+from .ssdp    import SSDP
 
 # library code logs; leave output to the application
 logging.getLogger(__name__).addHandler(logging.NullHandler())

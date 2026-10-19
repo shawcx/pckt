@@ -4,7 +4,7 @@ import struct
 import unittest
 
 from pckt import Ethernet, IP, IPv6, UDP, DNS, DNSQuestion, DNSRR, NBNS
-from pckt.layer7.dns import MX, SOA, SRV
+from pckt.dns import MX, SOA, SRV
 
 # dnsmasq's answer to "www.test.lan A" (a CNAME to web.test.lan): it doesn't
 # compress the CNAME target, and then points the next owner name into it

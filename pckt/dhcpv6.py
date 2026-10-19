@@ -1,7 +1,7 @@
 import socket
 import struct
 
-from ..layer import Layer
+from .layer import Layer
 
 
 class DHCPv6(Layer):

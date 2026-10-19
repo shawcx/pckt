@@ -1,6 +1,6 @@
 import struct
 
-from ..layer import Layer
+from .layer import Layer
 
 
 class SSDP(Layer):

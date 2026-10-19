@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Layout
 
-- **`pckt/layer.py`**: the `Layer` base class that every protocol subclasses (`ethernet.py`, `vlan.py`, `llc.py`, `arp.py`, `lldp.py`, `cdp.py`, `ip.py`, `ipv6.py`, `icmp.py`, `icmpv6.py`, `tcp.py`, `udp.py`, `layer7/dhcp.py`, `layer7/dhcpv6.py`, `layer7/dns.py`, `layer7/netbios.py`, `layer7/ssdp.py`).
+- **`pckt/layer.py`**: the `Layer` base class that every protocol subclasses (`ethernet.py`, `vlan.py`, `llc.py`, `arp.py`, `lldp.py`, `cdp.py`, `ip.py`, `ipv6.py`, `icmp.py`, `icmpv6.py`, `tcp.py`, `udp.py`, `dhcp.py`, `dhcpv6.py`, `dns.py`, `netbios.py`, `ssdp.py`).
   - Fields are declared in a `FIELDS` tuple of `(name, default)` pairs in wire order, and set with keyword constructors (`IP(dst='10.0.0.2')`). A layer's payload is another `Layer`, `bytes`, any object with `pack()`, or `None`.
   - `a / b` returns a **copy** of the chain with `b` appended as the innermost payload. `pkt[UDP]` finds a layer, and `UDP in pkt` tests for one.
   - A field left at its `None` default is computed when packing: lengths, header lengths (options get padded), checksums, and the next layer's ethertype, IP protocol or UDP ports. Those come from the payload class's `ETHERTYPE`/`IP_PROTO` attributes or its `udp_ports()` method. An explicitly set value is always packed as-is.

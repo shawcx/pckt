@@ -3,7 +3,7 @@ import socket
 import struct
 from random import randrange
 
-from ..layer import Layer, mac
+from .layer import Layer, mac
 
 class DHCP(Layer):
     '''

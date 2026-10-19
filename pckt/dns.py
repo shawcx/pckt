@@ -5,7 +5,7 @@ import struct
 from collections import namedtuple
 from dataclasses import dataclass, field
 
-from ..layer import Layer
+from .layer import Layer
 
 # typed rdata
 MX  = namedtuple('MX',  'preference exchange')
