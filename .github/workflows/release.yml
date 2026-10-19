@@ -1,0 +1,97 @@
+# On a v<version> tag, build the sdist and the Debian packages as
+# .gitlab-ci.yml does, and publish them as a GitHub release whose notes are
+# that version's debian/changelog entry. Run by hand (workflow_dispatch), it
+# only builds.
+#
+# The .debs of both distributions share a file name, so each gets its
+# distribution appended for the release.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  sdist:
+    runs-on: ubuntu-latest
+    container: python:3.15
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends libpcap-dev >/dev/null
+      - run: |
+          pip install -q build
+          python -m build --sdist
+          pip install dist/*.tar.gz
+          cd / && python -c 'import pckt; from pckt import pcap; assert pckt.vendor("00:50:56:00:00:01"), "manuf missing"'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sdist
+          path: dist/
+
+  deb:
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      matrix:
+        include:
+          - image: ubuntu:24.04
+            name: ubuntu-24.04
+          - image: debian:trixie
+            name: debian-trixie
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends dpkg-dev lintian >/dev/null
+          apt-get build-dep -y -qq ./ >/dev/null
+      # runs the tests against the built extension too
+      - run: dpkg-buildpackage -us -uc -b
+      - run: |
+          mkdir deb
+          find .. -maxdepth 1 -type f \( -name '*.deb' -o -name '*.ddeb' -o -name '*.changes' -o -name '*.buildinfo' \) -exec mv -t deb/ {} +
+          lintian --fail-on error,warning --suppress-tags bad-distribution-in-changes-file deb/*.changes
+          apt-get install -y -qq ./deb/python3-pckt_*_$(dpkg --print-architecture).deb >/dev/null
+          cd / && python3 -c 'import pckt; from pckt import pcap; print(pckt.__file__, pcap.lib_version()); assert pckt.vendor("00:50:56:00:00:01") == "VMware"'
+      - run: |
+          mkdir release
+          for f in deb/python3-pckt_*.deb; do
+            cp "$f" "release/$(basename "$f" .deb)_${{ matrix.name }}.deb"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deb-${{ matrix.name }}
+          path: release/
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [sdist, deb]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the tag matches the version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
+          changelog=$(sed -n '1s/^pckt (\(.*\)).*/\1/p' debian/changelog)
+          if [ "$GITHUB_REF_NAME" != "v$version" ] || [ "$changelog" != "$version" ]; then
+            echo "tag $GITHUB_REF_NAME, pyproject.toml $version, debian/changelog $changelog"
+            exit 1
+          fi
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # the newest changelog entry, without its header and trailer lines
+          awk 'NR > 2 && /^ -- /{exit} NR > 2' debian/changelog > notes.md
+          gh release create "$GITHUB_REF_NAME" --title "pckt ${GITHUB_REF_NAME#v}" --notes-file notes.md dist/*
