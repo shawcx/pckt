@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from pckt import checksum, Ethernet, ARP, IP, ICMP, ICMP_EchoRequest, ICMP_EchoReply, UDP, DHCP
-from pckt.stack.ghost import Ghost, BROADCAST
+from pckt.stack.ghost import Ghost, BROADCAST, DHCP_RETRY
 from pckt.mapping.passive import PassiveMapper
 
 try:
@@ -127,7 +127,8 @@ class TestGhost(unittest.TestCase):
         # the ACK never arrives
         ghost.tick(ghost.dhcp_sent + 1)
         self.assertEqual(2, len(self.pd.sent))
-        ghost.tick(ghost.dhcp_sent + 10)
+        # not exactly DHCP_RETRY: (t + 10) - t can round to just under 10
+        ghost.tick(ghost.dhcp_sent + DHCP_RETRY + 0.5)
         self.assertEqual(3, len(self.pd.sent))
         self.assertEqual(bytes([DHCP.DISCOVER]), self.pd.sent[-1][DHCP].option(DHCP.MESSAGE_TYPE))
 
