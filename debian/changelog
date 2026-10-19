@@ -1,3 +1,21 @@
+pckt (0.3) unstable; urgency=medium
+
+  * Add DHCPv6, NetBIOS name service, SSDP, 802.3 LLC/SNAP and CDP
+    layers, and decode LLMNR as DNS.
+  * Port pypcap3's features into pckt.pcap: dispatch(), iteration,
+    capture files through Dumper, open_dead(), compiled and raw BPF
+    programs, more capture settings, nanosecond timestamps, Ctrl-C to
+    interrupt blocked reads, and a type stub.
+  * Fix 'ip broadcast' filters on live handles, which were given the
+    device's netmask in the wrong byte order.
+  * Treat a truncated DHCP option as malformed rather than raising
+    IndexError.
+  * Remove ghost (pckt.stack) and the passive mapper (pckt.mapping),
+    which are separate projects now.
+  * Move the layer7 modules into pckt: pckt.layer7.dns is now pckt.dns.
+
+ -- Matthew Shaw <mshaw.cx@gmail.com>  Mon, 19 Oct 2026 16:45:27 -0400
+
 pckt (0.2) unstable; urgency=medium
 
   * Map hosts from IPv6 neighbor discovery, mDNS and LLDP in the passive
