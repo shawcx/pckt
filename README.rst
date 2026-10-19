@@ -27,13 +27,55 @@ capture them with libpcap.
 Fields left unset are computed when packing; anything set explicitly is
 sent as-is, so malformed packets are easy to build on purpose.
 
-Layers: Ethernet, VLAN (802.1Q), ARP, IP, IPv6, ICMP, ICMPv6 (echo,
-neighbor discovery), TCP, UDP, DHCP and DNS.
+Layers: Ethernet, VLAN (802.1Q), ARP, LLDP, IP, IPv6, ICMP, ICMPv6 (echo,
+neighbor discovery), TCP, UDP, DHCP and DNS (including mDNS).
+
+Devices
+-------
+
+``pcap.findalldevs()`` maps each capture device to what's known about it:
+
+.. code-block:: python
+
+    >>> pcap.findalldevs()['eth0']
+    {'mac': b'\x02\x11"3DU', 'ipv4': ['10.0.0.5'], 'ip': '10.0.0.5', 'netmask': '255.255.255.0',
+     'broadcast': '10.0.0.255', 'ipv6': ['fe80::11:22ff:fe33:4455']}
+
+``ipv4`` and ``ipv6`` list every address, and ``ip``, ``netmask`` and
+``broadcast`` are the first IPv4 address's. ``pcap.mac('eth0')`` returns just
+the MAC; on macOS, only root sees the real one. ``pckt.vendor(mac)`` looks up
+the vendor in Wireshark's list of OUIs.
+
+Tools
+-----
+
+``pckt.stack.ghost`` pretends to be a host on the local network: it leases an
+address with DHCP, or takes one with ``--ip``, and answers ARP and ping::
+
+    sudo python3 -m pckt.stack.ghost                  # list devices
+    sudo python3 -m pckt.stack.ghost eth0 --ip 10.0.0.66
+
+``pckt.mapping.passive`` maps the hosts on the local network without sending
+anything, from traffic that stays on the local link:
+
+- IPv4 addresses from ARP and DHCP requests, IPv6 addresses from neighbor
+  discovery
+- names from DHCP, mDNS and LLDP
+- the OS from DHCP: the vendor class, or else which options the client asks
+  for (Windows, macOS, iOS, Android, Linux)
+- descriptions, capabilities and management addresses from LLDP
+- the vendor, from the MAC
+
+It prints a line whenever a host's details change::
+
+    sudo python3 -m pckt.mapping.passive eth0
+    python3 -m pckt.mapping.passive --file capture.pcap
 
 Install
 -------
 
-Needs the libpcap headers (e.g. ``libpcap-dev``) and a C compiler::
+Needs Python 3.11 or later, the libpcap headers (e.g. ``libpcap-dev``) and a C
+compiler::
 
     pip install .
 
