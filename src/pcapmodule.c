@@ -152,6 +152,7 @@ static PyObject * PyPCAP_mac(PyObject *self, PyObject *args) {
 static PyObject * PyPCAP_findalldevs(PyObject *self) {
     PyObject *devdict;
     PyObject *addrdict;
+    PyObject *addrlist;
     PyObject *value;
 
     pcap_if_t *devices;
@@ -159,6 +160,8 @@ static PyObject * PyPCAP_findalldevs(PyObject *self) {
     pcap_addr_t *address;
     struct sockaddr *sa;
     struct sockaddr_in *sai;
+    struct sockaddr_in6 *sai6;
+    char addr6[INET6_ADDRSTRLEN];
     unsigned char mac[6];
     char errbuf[PCAP_ERRBUF_SIZE];
 
@@ -219,9 +222,25 @@ static PyObject * PyPCAP_findalldevs(PyObject *self) {
                     Py_DECREF(value);
                 }
                 break;
-            }
 
-            // TODO: IPv6
+            case AF_INET6:
+                sai6 = (struct sockaddr_in6 *)address->addr;
+                if(!inet_ntop(AF_INET6, &sai6->sin6_addr, addr6, sizeof(addr6))) {
+                    break;
+                }
+
+                // an interface usually has several, so they're a list
+                addrlist = PyDict_GetItemString(addrdict, "ipv6");
+                if(!addrlist) {
+                    addrlist = PyList_New(0);
+                    PyDict_SetItemString(addrdict, "ipv6", addrlist);
+                    Py_DECREF(addrlist);
+                }
+                value = PyUnicode_FromString(addr6);
+                PyList_Append(addrlist, value);
+                Py_DECREF(value);
+                break;
+            }
 
             address = address->next;
         }

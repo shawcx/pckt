@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import socket
 import struct
 import subprocess
 import sys
@@ -51,6 +52,8 @@ class TestPcap(unittest.TestCase):
                 self.assertIsInstance(info['mac'], bytes)
             if 'ip' in info:
                 self.assertIsInstance(info['ip'], str)
+            for addr in info.get('ipv6', []):
+                socket.inet_pton(socket.AF_INET6, addr)
 
     @unittest.skipUnless(sys.platform.startswith('linux'), 'needs a loopback named lo')
     def test_mac(self):
