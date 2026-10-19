@@ -80,34 +80,6 @@ Filters compile to programs you can test frames against, without a device::
     program.match(frame)                    # True
     list(program)                           # [(40, 0, 0, 12), ...], as tcpdump -ddd prints them
 
-Tools
------
-
-``pckt.stack.ghost`` pretends to be a host on the local network: it leases an
-address with DHCP, or takes one with ``--ip``, and answers ARP and ping::
-
-    sudo python3 -m pckt.stack.ghost                  # list devices
-    sudo python3 -m pckt.stack.ghost eth0 --ip 10.0.0.66
-
-``pckt.mapping.passive`` maps the hosts on the local network without sending
-anything, from traffic that stays on the local link:
-
-- IPv4 addresses from ARP and DHCP requests, IPv6 addresses from neighbor
-  discovery and DHCPv6
-- names from DHCP, DHCPv6, mDNS, LLMNR, NetBIOS name registrations, LLDP and
-  CDP
-- the OS from DHCP and DHCPv6: the vendor class, or else which options a DHCP
-  client asks for (Windows, macOS, iOS, Android, Linux); failing those, from
-  the product a device announces over SSDP, or a browser searches with
-- descriptions, capabilities and management addresses from LLDP and CDP, and
-  the model from CDP
-- the vendor, from the MAC
-
-It prints a line whenever a host's details change::
-
-    sudo python3 -m pckt.mapping.passive eth0
-    python3 -m pckt.mapping.passive --file capture.pcap
-
 Install
 -------
 
