@@ -310,6 +310,17 @@ class TestDHCP(unittest.TestCase):
         self.assertEqual(b'\x00', dhcp.options[-1])
         self.assertEqual(raw, dhcp.pack())
 
+    def test_truncated_option(self):
+        data = self.discover().pack()
+        # the end option is at 250: replace it with a code and no length, then a length past the end
+        for raw in (data[:250] + b'\x0c', data[:250] + b'\x0c\x05ghi'):
+            with self.assertRaises(struct.error):
+                DHCP.decode(raw)
+            # inside a frame it's kept as bytes
+            pkt = Ethernet.decode((Ethernet() / IP() / UDP(src=68, dst=67) / raw).pack())
+            self.assertNotIn(DHCP, pkt)
+            self.assertEqual(raw, pkt[UDP].payload)
+
     def test_raw_option_entries(self):
         self.assertEqual(
             DHCP(options=[b'\x35\x01\x03']).pack(),
