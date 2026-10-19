@@ -90,6 +90,13 @@ static int find_mac(const char *ifname, unsigned char *mac) {
 
     memcpy(mac, LLADDR(sdl), 6);
     free(buf);
+
+    // macOS hides the address from processes that aren't root and reports this one instead
+    if(0 == memcmp(mac, "\x02\x00\x00\x00\x00\x00", 6)) {
+        errno = EPERM;
+        return -1;
+    }
+
     return 0;
 
 #else
