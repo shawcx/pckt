@@ -3,7 +3,7 @@
 import struct
 import unittest
 
-from pckt import Ethernet, IP, IPv6, UDP, DNS, DNSQuestion, DNSRR
+from pckt import Ethernet, IP, IPv6, UDP, DNS, DNSQuestion, DNSRR, NBNS
 from pckt.layer7.dns import MX, SOA, SRV
 
 # dnsmasq's answer to "www.test.lan A" (a CNAME to web.test.lan): it doesn't
@@ -171,7 +171,7 @@ class TestTransport(unittest.TestCase):
         self.assertEqual((53, 53), struct.unpack('!HH', data[20:24]))
 
     def test_dispatch(self):
-        for (src, dst) in ((40000, 53), (53, 40000), (5353, 5353)):
+        for (src, dst) in ((40000, 53), (53, 40000), (5353, 5353), (5355, 40000)):
             pkt = Ethernet.decode((Ethernet() / IPv6() / UDP(src=src, dst=dst) / DNS.query('printer.local', DNS.PTR)).pack())
             self.assertIn(DNS, pkt)
             self.assertEqual('printer.local', pkt[DNS].questions[0].name)
@@ -181,6 +181,75 @@ class TestTransport(unittest.TestCase):
             "DNS(id=0x0001, questions=[DNSQuestion(name='example.com', type=1, cls=1)])",
             repr(DNS.query('example.com', id=1)),
             )
+
+
+# from Wireshark's smb-browser-elections sample: a broadcast registration of
+# SYNERITY<1d>, and a query answered with three addresses
+NBNS_REGISTRATION = bytes.fromhex(
+    '80da29100001000000000001204644464a454f45464643454a4645464a4341434143414341434143414341424e00002000'
+    '01c00c00200001000493e000060000c0a87b01'
+    )
+NBNS_RESPONSE = bytes.fromhex(
+    '80dc85000000000100000000204644464a454f45464643454a4645464a4341434143414341434143414341424e00002000'
+    '01000493e000120000c0a888010000c0a8a4010000c0a87b02'
+    )
+
+
+class TestNBNS(unittest.TestCase):
+    def test_encode_name(self):
+        # the wildcard, as namescan.py sends it, is padded with zeroes
+        self.assertEqual('CK' + 'A' * 30, NBNS.encode_name('*'))
+        self.assertEqual('EEEFFDELFEEPFACNEBECDBDCCACACAAA', NBNS.encode_name('DESKTOP-AB12'))
+        self.assertEqual('FDFJEOEFFCEJFEFJCACACACACACACABN.corp', NBNS.encode_name('SYNERITY', 0x1d, 'corp'))
+        with self.assertRaises(ValueError):
+            NBNS.encode_name('X' * 16)
+
+    def test_decode_name(self):
+        self.assertEqual(('SYNERITY', 0x1d, ''), NBNS.decode_name('FDFJEOEFFCEJFEFJCACACACACACACABN'))
+        self.assertEqual(('*', 0, 'corp'), NBNS.decode_name(NBNS.encode_name('*', scope='corp')))
+        for name in ('example.com', 'fdfjeoeffcejfefjcacacacacacacabn', 'FDFJEOEFFCEJFEFJCACACACACACACABZ'):
+            self.assertIsNone(NBNS.decode_name(name), name)
+
+    def test_registration(self):
+        msg = NBNS.decode(NBNS_REGISTRATION)
+        self.assertEqual((0, NBNS.REGISTRATION, 1, 1), (msg.qr, msg.opcode, msg.rd, msg.broadcast))
+        self.assertEqual(NBNS.NB, msg.questions[0].type)
+        self.assertEqual([(0, '192.168.123.1')], msg.additional[0].data)
+        self.assertEqual(NBNS_REGISTRATION, msg.pack())
+        # built from the fields, the record's name is compressed the same way
+        self.assertEqual(NBNS_REGISTRATION, NBNS(**{name: getattr(msg, name) for (name, default) in NBNS.FIELDS}).pack())
+
+    def test_response(self):
+        msg = NBNS.decode(NBNS_RESPONSE)
+        self.assertEqual((1, 1, 0), (msg.qr, msg.aa, msg.broadcast))
+        self.assertEqual([(0, '192.168.136.1'), (0, '192.168.164.1'), (0, '192.168.123.2')], msg.answers[0].data)
+        self.assertEqual(NBNS_RESPONSE, msg.pack())
+
+    def test_flags(self):
+        self.assertEqual(0x2910, struct.unpack('!H', NBNS(opcode=NBNS.REGISTRATION, broadcast=1).pack()[2:4])[0])
+        self.assertEqual(1, NBNS.decode(NBNS(broadcast=1).pack()).broadcast)
+        with self.assertRaises(TypeError):
+            NBNS(cd=1)
+
+    def test_rdata(self):
+        name = NBNS.encode_name('HOST')
+        records = [
+            DNSRR(name, NBNS.NB, data=[(NBNS.GROUP, '10.0.0.1')]),
+            # a WACK's data is the request's flags
+            DNSRR(name, NBNS.NB, data=b'\x29\x10'),
+            # NBSTAT is DNS's SRV type, but isn't parsed as one
+            DNSRR(name, NBNS.NBSTAT, data=b'\x00' * 7),
+            ]
+        msg = NBNS.decode(NBNS(answers=records).pack())
+        self.assertEqual(records, msg.answers)
+        with self.assertRaises(TypeError):
+            NBNS(answers=[DNSRR(name, NBNS.NBSTAT, data='text')]).pack()
+
+    def test_transport(self):
+        data = (IP() / UDP() / NBNS()).pack()
+        self.assertEqual((137, 137), struct.unpack('!HH', data[20:24]))
+        pkt = Ethernet.decode((Ethernet() / IP() / UDP(src=137, dst=137) / NBNS_REGISTRATION).pack())
+        self.assertIsInstance(pkt[UDP].payload, NBNS)
 
 
 if '__main__' == __name__:

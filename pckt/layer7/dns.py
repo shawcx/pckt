@@ -106,9 +106,12 @@ class DNS(Layer):
 
     Senders differ in what they compress, so a decoded message keeps its
     original bytes and packs them verbatim until a field is changed.
+
+    mDNS (5353) and LLMNR (5355) use the same format; LLMNR's C and T flags
+    are the aa and rd bits.
     '''
 
-    UDP_PORTS = (53, 5353)
+    UDP_PORTS = (53, 5353, 5355)
 
     # types
     A     = 1
@@ -162,6 +165,10 @@ class DNS(Layer):
         ('compress',   True),
     )
 
+    # the flag fields: (name, lowest bit, mask)
+    FLAGS = (('qr', 15, 1), ('opcode', 11, 0xf), ('aa', 10, 1), ('tc', 9, 1), ('rd', 8, 1), ('ra', 7, 1),
+             ('z', 6, 1), ('ad', 5, 1), ('cd', 4, 1), ('rcode', 0, 0xf))
+
     SECTIONS = (('qdcount', 'questions'), ('ancount', 'answers'), ('nscount', 'authority'), ('arcount', 'additional'))
 
     # rdata names that may be compressed (RFC 3597 section 4)
@@ -187,8 +194,10 @@ class DNS(Layer):
         return (53, 53)
 
     def flags(self):
-        return ((self.qr << 15) | (self.opcode << 11) | (self.aa << 10) | (self.tc << 9) | (self.rd << 8) |
-                (self.ra << 7) | (self.z << 6) | (self.ad << 5) | (self.cd << 4) | self.rcode)
+        value = 0
+        for (name, bit, mask) in self.FLAGS:
+            value |= getattr(self, name) << bit
+        return value
 
     # packing
 
@@ -254,16 +263,8 @@ class DNS(Layer):
     def unpack(self, pkt):
         ((self.id, flags, self.qdcount, self.ancount, self.nscount, self.arcount), offset) = _read(pkt, 0, '!HH4H')
 
-        self.qr     = flags >> 15
-        self.opcode = (flags >> 11) & 0xf
-        self.aa     = (flags >> 10) & 1
-        self.tc     = (flags >> 9) & 1
-        self.rd     = (flags >> 8) & 1
-        self.ra     = (flags >> 7) & 1
-        self.z      = (flags >> 6) & 1
-        self.ad     = (flags >> 5) & 1
-        self.cd     = (flags >> 4) & 1
-        self.rcode  = flags & 0xf
+        for (name, bit, mask) in self.FLAGS:
+            setattr(self, name, (flags >> bit) & mask)
 
         self.questions = []
         for idx in range(self.qdcount):
