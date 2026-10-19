@@ -443,6 +443,12 @@ class TestPassive(unittest.TestCase):
         self.assertIsNone(mapper.process(ssdp_from(SERVER_MAC, '10.9.0.1', ssdp_notify(location='http://10.9.0.1:5000/'))))
         self.assertNotIn('os', mapper.hosts['00:50:56:00:cc:dd'])
 
+    def test_ssdp_invalid_location(self):
+        # urlsplit() raises ValueError for these, which mustn't stop the mapper
+        mapper = PassiveMapper()
+        for location in ('http://[fe80::5/', 'http://[fe80::\xff]:5000/', 'http://[10.0.0.1]/'):
+            self.assertIsNone(mapper.process(ssdp_from(PEER_MAC, '10.0.0.1', ssdp_notify(location=location))), location)
+
     def test_lldp(self):
         mapper = PassiveMapper()
         host = mapper.process((Ethernet(dst=LLDP.MULTICAST, src='00:11:22:33:44:02') / lldp_switch()).pack())
@@ -506,6 +512,15 @@ class TestPassive(unittest.TestCase):
         raw = DHCP(clientmac=PEER_MAC, options=[(DHCP.MESSAGE_TYPE, bytes([DHCP.REQUEST]))], padding=b'').pack()[:-1] + b'\x0c'
         frame = (Ethernet(src=PEER_MAC) / IP(src='0.0.0.0') / UDP(src=68, dst=67) / raw).pack()
         self.assertIsNone(PassiveMapper().process(frame))
+
+    def test_dhcp_requested_unspecified(self):
+        # a discover asking for 0.0.0.0, as in Wireshark's dhcp sample: the client's address is unknown
+        mapper = PassiveMapper()
+        self.assertIsNone(mapper.process(dhcp_request(PEER_MAC, requested='0.0.0.0')))
+        # unless it has one
+        frame = (Ethernet(src=PEER_MAC) / IP(src='10.0.0.5') / UDP() / DHCP(clientmac=PEER_MAC, clientip='10.0.0.5', options=[
+            (DHCP.MESSAGE_TYPE, bytes([DHCP.REQUEST])), (DHCP.REQUESTED_IP, bytes(4))])).pack()
+        self.assertEqual('10.0.0.5', mapper.process(frame)['ip'])
 
     def test_dhcp_reply_ignored(self):
         mapper = PassiveMapper()

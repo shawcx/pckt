@@ -100,7 +100,8 @@ class PassiveMapper:
         fields = {}
 
         requested = msg.option(DHCP.REQUESTED_IP)
-        if requested and 4 == len(requested):
+        # some discovers ask for 0.0.0.0, which is no more the client's than an unset ciaddr
+        if requested and 4 == len(requested) and bytes(4) != requested:
             fields['ip'] = socket.inet_ntoa(requested)
         elif UNSPECIFIED != msg.clientip:
             fields['ip'] = msg.clientip
@@ -219,7 +220,12 @@ class PassiveMapper:
         else:
             # announcements and answers give the device's own address in the URL of its description,
             # which a proxy announcing others doesn't
-            if urlsplit(msg.header('LOCATION', '')).hostname != sender:
+            try:
+                hostname = urlsplit(msg.header('LOCATION', '')).hostname
+            except ValueError:
+                # e.g. an invalid address in brackets
+                return (None, None)
+            if hostname != sender:
                 return (None, None)
             product = msg.header('SERVER')
 
