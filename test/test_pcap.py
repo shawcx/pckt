@@ -51,7 +51,10 @@ class TestPcap(unittest.TestCase):
             if 'mac' in info:
                 self.assertIsInstance(info['mac'], bytes)
             if 'ip' in info:
-                self.assertIsInstance(info['ip'], str)
+                # the first IPv4 address
+                self.assertEqual(info['ipv4'][0], info['ip'])
+            for addr in info.get('ipv4', []):
+                socket.inet_pton(socket.AF_INET, addr)
             for addr in info.get('ipv6', []):
                 socket.inet_pton(socket.AF_INET6, addr)
 
