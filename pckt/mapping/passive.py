@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 '''
 Passively map hosts on the local network from ARP, DHCP, IPv6 neighbor
-discovery and mDNS traffic.
+discovery, mDNS and LLDP traffic.
 
     sudo python3 -m pckt.mapping.passive eth0
     python3 -m pckt.mapping.passive --file capture.pcap
 
 Plain IP traffic isn't used: routed packets carry the router's MAC with the
-remote host's address. Neighbor discovery and mDNS stay on the local link.
+remote host's address. Neighbor discovery, mDNS and LLDP stay on the local link.
 '''
 
 import argparse
@@ -15,7 +15,7 @@ import socket
 import struct
 
 from pckt.capture import packets
-from pckt import pcap, vendor, Ethernet, ARP, IP, IPv6, ICMPv6, ICMPv6_NeighborAdvert, UDP, DHCP, DNS
+from pckt import pcap, vendor, Ethernet, ARP, IP, IPv6, ICMPv6, ICMPv6_NeighborAdvert, UDP, DHCP, DNS, LLDP
 
 UNSPECIFIED = '0.0.0.0'
 UNSPECIFIED6 = '::'
@@ -27,7 +27,8 @@ NEIGHBOR_DISCOVERY = range(133, 137)
 
 class PassiveMapper:
     def __init__(self):
-        # 'aa:bb:cc:dd:ee:ff' => {'mac', 'vendor', 'ip', 'ipv6', 'name', 'os'}; ipv6 is a list
+        # 'aa:bb:cc:dd:ee:ff' => {'mac', 'vendor', 'ip', 'ipv6', 'name', 'os', 'description', 'capabilities'};
+        # ipv6 and capabilities are lists
         self.hosts = {}
 
     def process(self, data):
@@ -45,6 +46,8 @@ class PassiveMapper:
             (addr, fields) = self.from_ndp(pkt[Ethernet].src, pkt[IPv6], pkt[ICMPv6])
         elif DNS in pkt and MDNS_PORT == pkt[UDP].src:
             (addr, fields) = self.from_mdns(pkt[Ethernet].src, pkt, pkt[DNS])
+        elif LLDP in pkt:
+            (addr, fields) = self.from_lldp(pkt[Ethernet].src, pkt[LLDP])
         else:
             return None
 
@@ -135,6 +138,27 @@ class PassiveMapper:
             fields['ipv6'] = ipv6
         return (src, fields)
 
+    def from_lldp(self, src, msg):
+        # a MAC chassis ID identifies a switch across its ports, which each send from their own MAC
+        chassis = msg.tlv(LLDP.CHASSIS_ID, b'')
+        if 7 == len(chassis) and LLDP.CHASSIS_MAC == chassis[0]:
+            src = chassis[1:]
+
+        fields = {}
+        for (kind, name) in ((LLDP.SYSTEM_NAME, 'name'), (LLDP.SYSTEM_DESCRIPTION, 'description')):
+            value = msg.tlv(kind)
+            if value:
+                fields[name] = value.decode('utf-8', 'replace')
+        capabilities = msg.capabilities()
+        if capabilities:
+            fields['capabilities'] = capabilities
+        for addr in msg.management_addresses():
+            if ':' in addr:
+                fields.setdefault('ipv6', []).append(addr)
+            else:
+                fields.setdefault('ip', addr)
+        return (src, fields)
+
 
 # clients that name themselves in the vendor class (option 60)
 VENDOR_CLASSES = (
@@ -165,13 +189,19 @@ def dhcp_os(msg):
 
 
 def describe(host):
+    extra = list(host.get('ipv6', []))
+    if host.get('capabilities'):
+        extra.append('[%s]' % ','.join(host['capabilities']))
+    if host.get('description'):
+        # some (e.g. Cisco's) span several lines
+        extra.append('"%s"' % ' '.join(host['description'].split()))
     return ('%s  %-15s %-20s %-8s %-12s %s' % (
         host['mac'],
         host.get('ip', ''),
         host.get('name', ''),
         host.get('os', ''),
         host.get('vendor') or '',
-        ' '.join(host.get('ipv6', [])),
+        ' '.join(extra),
         )).rstrip()
 
 
@@ -186,7 +216,7 @@ def main():
         pd = pcap.open_offline(args.file)
     else:
         pd = pcap.open_live(args.device, 65535, True, 100)
-    pd.setfilter('arp or icmp6 or (udp and (port 67 or port 68 or port %d))' % MDNS_PORT)
+    pd.setfilter('arp or icmp6 or ether proto 0x%x or (udp and (port 67 or port 68 or port %d))' % (LLDP.ETHERTYPE, MDNS_PORT))
 
     mapper = PassiveMapper()
     try:

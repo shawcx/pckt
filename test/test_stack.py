@@ -9,7 +9,7 @@ import unittest
 
 from pckt import (
     checksum, Ethernet, ARP, IP, IPv6, ICMP, ICMP_EchoRequest, ICMP_EchoReply, ICMPv6, ICMPv6_EchoRequest,
-    ICMPv6_NeighborSolicit, ICMPv6_NeighborAdvert, UDP, DHCP, DNS, DNSRR,
+    ICMPv6_NeighborSolicit, ICMPv6_NeighborAdvert, UDP, DHCP, DNS, DNSRR, LLDP,
     )
 from pckt.stack.ghost import Ghost, BROADCAST, DHCP_RETRY
 from pckt.mapping.passive import PassiveMapper, describe
@@ -20,6 +20,7 @@ except ImportError:
     pcap = None
 
 from test_pcap import write_pcap
+from test_layers import lldp_switch
 
 GHOST_MAC = bytes.fromhex('020000000001')
 PEER_MAC = bytes.fromhex('00505600aabb')  # VMware prefix, for the vendor lookup
@@ -282,6 +283,25 @@ class TestPassive(unittest.TestCase):
         host = PassiveMapper().process(mdns_from(PEER_MAC, '10.0.0.7', address_records(name, '10.0.0.7')))
         self.assertEqual('Mätt-Laptop', host['name'])
 
+    def test_lldp(self):
+        mapper = PassiveMapper()
+        host = mapper.process((Ethernet(dst=LLDP.MULTICAST, src='00:11:22:33:44:02') / lldp_switch()).pack())
+        # keyed by the chassis MAC, not the port's
+        self.assertEqual('00:11:22:33:44:00', host['mac'])
+        self.assertEqual(('core-sw', '10.0.0.2', ['2001:db8::2'], ['bridge', 'router']),
+                         (host['name'], host['ip'], host['ipv6'], host['capabilities']))
+        self.assertTrue(host['description'].startswith('Cisco IOS Software'))
+        self.assertIn('[bridge,router] "Cisco IOS Software, C2960 Software Copyright (c) 1986-2016"', describe(host))
+        # another port of the same switch
+        self.assertIsNone(mapper.process((Ethernet(dst=LLDP.MULTICAST, src='00:11:22:33:44:03') / lldp_switch()).pack()))
+        self.assertEqual(['00:11:22:33:44:00'], list(mapper.hosts))
+
+    def test_lldp_local_chassis(self):
+        # e.g. lldpd with a locally assigned chassis ID: keyed by the sender's MAC
+        lldp = LLDP(tlvs=[(LLDP.CHASSIS_ID, bytes([LLDP.CHASSIS_LOCAL]) + b'server1'), (LLDP.SYSTEM_NAME, b'server1')])
+        host = PassiveMapper().process((Ethernet(dst=LLDP.MULTICAST, src=PEER_MAC) / lldp).pack())
+        self.assertEqual(('00:50:56:00:aa:bb', 'server1'), (host['mac'], host['name']))
+
     def test_describe(self):
         mapper = PassiveMapper()
         mapper.process(arp_from(PEER_MAC, '10.0.0.7'))
@@ -309,6 +329,7 @@ class TestPassive(unittest.TestCase):
                 dhcp_request(SERVER_MAC, name=b'laptop'),
                 ndp_from(GHOST_MAC, 'fe80::1', ICMPv6_NeighborSolicit(target='fe80::2')),
                 mdns_from(PEER_MAC, '10.0.0.7', address_records('printer.local', '10.0.0.7')),
+                (Ethernet(dst=LLDP.MULTICAST, src='00:11:22:33:44:02') / lldp_switch()).pack(),
                 ])
             root = os.path.dirname(os.path.dirname(pcap.__file__))
             result = subprocess.run(
@@ -317,11 +338,12 @@ class TestPassive(unittest.TestCase):
                 )
         self.assertEqual(0, result.returncode, result.stderr)
         lines = result.stdout.splitlines()
-        self.assertEqual(4, len(lines))
+        self.assertEqual(5, len(lines))
         self.assertIn('10.0.0.7', lines[0])
         self.assertIn('laptop', lines[1])
         self.assertIn('fe80::1', lines[2])
         self.assertIn('printer', lines[3])
+        self.assertIn('core-sw', lines[4])
 
 
 if '__main__' == __name__:

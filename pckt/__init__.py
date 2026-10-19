@@ -8,6 +8,7 @@ from .ethernet import Ethernet
 from .vlan     import VLAN
 
 from .arp  import ARP
+from .lldp import LLDP
 from .ip   import IP
 from .ipv6 import IPv6
 
