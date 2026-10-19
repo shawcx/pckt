@@ -11,6 +11,7 @@ class Ethernet(Layer):
         0x8035 : 'RARP',
         0x8100 : 'VLAN',
         0x86dd : 'IPv6',
+        0x88cc : 'LLDP',
     }
 
     IP   = 0x0800
@@ -18,6 +19,7 @@ class Ethernet(Layer):
     RARP = 0x8035
     VLAN = 0x8100
     IPv6 = 0x86dd
+    LLDP = 0x88cc
 
     FIELDS = (
         ('dst',   b'\xff\xff\xff\xff\xff\xff'),

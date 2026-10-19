@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 
+import socket
 import struct
 import unittest
 
 from pckt import (
     Layer, checksum, Ethernet, VLAN, ARP, IP, IPv6, ICMP, ICMP_EchoRequest, ICMP_EchoReply,
     ICMPv6, ICMPv6_EchoRequest, ICMPv6_EchoReply, ICMPv6_NeighborSolicit, ICMPv6_NeighborAdvert,
-    TCP, UDP, DHCP, DHCP_Request,
+    TCP, UDP, DHCP, DHCP_Request, LLDP,
     )
 
 
@@ -324,6 +325,71 @@ class TestDHCP(unittest.TestCase):
         a = DHCP()
         a.options.append((1, b'x'))
         self.assertEqual([], DHCP().options)
+
+
+def lldp_switch(port_mac=b'\x00\x11\x22\x33\x44\x02'):
+    '''what a switch port sends: its chassis is identified by the switch's MAC'''
+    return LLDP(tlvs=[
+        (LLDP.CHASSIS_ID, bytes([LLDP.CHASSIS_MAC]) + b'\x00\x11\x22\x33\x44\x00'),
+        (LLDP.PORT_ID, bytes([LLDP.PORT_INTERFACE]) + b'gi0/2'),
+        (LLDP.TTL, struct.pack('!H', 120)),
+        (LLDP.PORT_DESCRIPTION, b'uplink'),
+        (LLDP.SYSTEM_NAME, b'core-sw'),
+        (LLDP.SYSTEM_DESCRIPTION, b'Cisco IOS Software, C2960 Software\nCopyright (c) 1986-2016'),
+        # supported: bridge and router; enabled: the same
+        (LLDP.SYSTEM_CAPABILITIES, struct.pack('!HH', 0x14, 0x14)),
+        # length (family + address), family, address, interface numbering, interface, OID length
+        (LLDP.MANAGEMENT_ADDRESS, struct.pack('!BB4sBIB', 5, 1, socket.inet_aton('10.0.0.2'), 2, 1, 0)),
+        (LLDP.MANAGEMENT_ADDRESS, struct.pack('!BB16sBIB', 17, 2, socket.inet_pton(socket.AF_INET6, '2001:db8::2'), 2, 1, 0)),
+        ])
+
+
+class TestLLDP(unittest.TestCase):
+    def test_build(self):
+        frame = (Ethernet(dst=LLDP.MULTICAST, src='00:11:22:33:44:02') / lldp_switch()).pack()
+        self.assertEqual(LLDP.ETHERTYPE, struct.unpack('!H', frame[12:14])[0])
+        # chassis ID TLV: type 1, length 7
+        self.assertEqual(struct.pack('!H', (1 << 9) | 7), frame[14:16])
+        # ends with the end TLV
+        self.assertEqual(b'\x00\x00', frame[-2:])
+
+    def test_decode(self):
+        frame = (Ethernet(dst=LLDP.MULTICAST) / lldp_switch()).pack()
+        pkt = Ethernet.decode(frame)
+        lldp = pkt[LLDP]
+        self.assertEqual(lldp_switch().tlvs, lldp.tlvs)
+        self.assertEqual(b'core-sw', lldp.tlv(LLDP.SYSTEM_NAME))
+        self.assertIsNone(lldp.tlv(LLDP.ORGANIZATION))
+        self.assertEqual(['bridge', 'router'], lldp.capabilities())
+        self.assertEqual(['10.0.0.2', '2001:db8::2'], lldp.management_addresses())
+        self.assertEqual(frame, pkt.pack())
+
+    def test_padding(self):
+        # short frames are padded to 60 bytes after the end TLV
+        frame = (Ethernet(dst=LLDP.MULTICAST) / LLDP(tlvs=[(LLDP.TTL, b'\x00\x78')])).pack()
+        frame += bytes(60 - len(frame))
+        pkt = Ethernet.decode(frame)
+        self.assertEqual([(LLDP.TTL, b'\x00\x78')], pkt[LLDP].tlvs)
+        self.assertEqual(frame, pkt.pack())
+
+    def test_truncated(self):
+        data = lldp_switch().pack()[:6]
+        with self.assertRaises(struct.error):
+            LLDP.decode(data)
+        # inside a frame it's kept as bytes
+        pkt = Ethernet.decode((Ethernet(proto=LLDP.ETHERTYPE) / data).pack())
+        self.assertNotIn(LLDP, pkt)
+        self.assertEqual(data, pkt.payload)
+
+    def test_malformed_fields(self):
+        lldp = LLDP(tlvs=[(LLDP.SYSTEM_CAPABILITIES, b'\x00'), (LLDP.MANAGEMENT_ADDRESS, b'\x05\x09abcd'), (LLDP.MANAGEMENT_ADDRESS, b'\x03\x01ab')])
+        self.assertEqual([], lldp.capabilities())
+        # an unknown family, then an IPv4 address that's too short
+        self.assertEqual([], lldp.management_addresses())
+
+    def test_default_not_shared(self):
+        LLDP().tlvs.append((LLDP.TTL, b'\x00\x00'))
+        self.assertEqual([], LLDP().tlvs)
 
 
 if '__main__' == __name__:
