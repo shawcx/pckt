@@ -23,6 +23,8 @@ capture them with libpcap.
     pd = pcap.create('eth0')
     pd.set_immediate_mode(True)
     pd.activate()
+    for data, ts, wirelen in pd:    # until Ctrl-C
+        print(ts, Ethernet.decode(data))
 
 Fields left unset are computed when packing; anything set explicitly is
 sent as-is, so malformed packets are easy to build on purpose.
@@ -43,9 +45,40 @@ Devices
      'broadcast': '10.0.0.255', 'ipv6': ['fe80::11:22ff:fe33:4455']}
 
 ``ipv4`` and ``ipv6`` list every address, and ``ip``, ``netmask`` and
-``broadcast`` are the first IPv4 address's. ``pcap.mac('eth0')`` returns just
-the MAC; on macOS, only root sees the real one. ``pckt.vendor(mac)`` looks up
-the vendor in Wireshark's list of OUIs.
+``broadcast`` are the first IPv4 address's. Each device also has its
+``description``, ``flags`` (``pcap.IF_UP`` and so on) and ``addresses``, with
+each address's netmask, broadcast and destination. ``pcap.mac('eth0')``
+returns just the MAC; on macOS, only root sees the real one.
+``pckt.vendor(mac)`` looks up the vendor in Wireshark's list of OUIs.
+
+Capture files and filters
+-------------------------
+
+Capture DNS traffic to a file until Ctrl-C, then read it back:
+
+.. code-block:: python
+
+    pd = pcap.open_live('eth0')
+    pd.setfilter('udp port 53')
+    with pd.dump_open('dns.pcap') as dumper:
+        try:
+            pd.loop(dumper)       # written by libpcap, keeping capture timestamps
+        except KeyboardInterrupt:
+            pass
+
+    with pcap.open_offline('dns.pcap') as pd:
+        for data, ts, wirelen in pd:
+            print(ts, Ethernet.decode(data)[UDP].dst)
+
+``open_offline()`` also reads from a file object or a descriptor, such as
+``tcpdump -w -`` through a pipe. ``open_dead()`` gives a handle without a
+device, for writing frames you've built with ``dumper.write(frame, ts)``.
+
+Filters compile to programs you can test frames against, without a device::
+
+    program = pcap.compile('udp port 53')   # for Ethernet, unless linktype= says otherwise
+    program.match(frame)                    # True
+    list(program)                           # [(40, 0, 0, 12), ...], as tcpdump -ddd prints them
 
 Tools
 -----

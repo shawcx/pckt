@@ -1,7 +1,7 @@
 # Build the pcap extension and run the unit tests on the oldest supported
-# Python and the newest, then check that the sdist installs and works outside
-# the source tree, and build the Debian package on Ubuntu 24.04 and Debian
-# trixie (the .debs are kept as artifacts).
+# Python and the newest, and check the type stub with mypy. Then check that
+# the sdist installs and works outside the source tree, and build the Debian
+# package on Ubuntu 24.04 and Debian trixie (the .debs are kept as artifacts).
 #
 # test_live.py needs unprivileged user namespaces, which the default Docker
 # seccomp profile blocks, so on a Docker runner it's reported as skipped.
@@ -25,6 +25,21 @@ test:
     # the pcap tests skip rather than fail without the extension, so check it imports
     - python -c 'from pckt import pcap; print(pcap.lib_version())'
     - PYTHONPATH=. python -m unittest discover -s test -v
+
+# the type stub against the compiled module, and the types it gives common calls
+typing:
+  stage: test
+  image: python:3.15
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends libpcap-dev >/dev/null
+  script:
+    # a regular install, and run from outside the tree, so mypy reads the
+    # installed package and its stub rather than the sources
+    - pip install -q mypy==2.4.0 .
+    - cd test
+    - python -m mypy.stubtest pckt.pcap --allowlist ../stubtest-allowlist.txt
+    - python -m mypy --strict typing_check.py
 
 sdist:
   stage: build

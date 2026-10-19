@@ -160,6 +160,20 @@ def create_scenario(tmp):
         rx.set_snaplen(128)
     except pcap.error as e:
         results['set_after'] = str(e)
+
+    # loop() writes straight into a Dumper; the frame is already waiting
+    rx.setnonblock(False)
+    pcap.open_live('v0').sendpacket(frame)
+    dump = os.path.join(tmp, 'live.pcap')
+    with rx.dump_open(dump) as dumper:
+        rx.loop(dumper, 1)
+    results['dumped'] = [(data.hex(), wirelen) for (data, ts, wirelen) in pcap.open_offline(dump)]
+
+    # filters on a device get its netmask, for 'ip broadcast'
+    results['lookupnet'] = pcap.lookupnet('v0')
+    broadcast = pcap.open_live('v0').compile('ip broadcast')
+    results['broadcast'] = [broadcast.match((Ethernet() / IP(dst=dst) / UDP()).pack())
+                            for dst in ('10.0.0.255', '10.0.0.2', '255.255.255.255')]
     return results
 
 
@@ -257,6 +271,9 @@ class TestLive(unittest.TestCase):
         self.assertEqual(sent[:64], bytes.fromhex(result['captured']))
         self.assertEqual(len(sent), result['wirelen'])
         self.assertIn("can't be changed after", result['set_after'])
+        self.assertEqual([[sent[:64].hex(), len(sent)]], result['dumped'])
+        self.assertEqual(['10.0.0.0', '255.255.255.0'], result['lookupnet'])
+        self.assertEqual([True, False, True], result['broadcast'])
         # findalldevs() lists every address, and ip is the first IPv4 one
         self.assertEqual(('10.0.0.1', ['10.0.0.1', '10.0.0.3']), (result['ip'], result['ipv4']))
         self.assertIn('2001:db8::1', result['ipv6'])

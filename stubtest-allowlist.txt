@@ -1,0 +1,4 @@
+# Exceptions for `python -m mypy.stubtest pckt.pcap --allowlist stubtest-allowlist.txt`.
+#
+# stubtest sees C slot wrappers as (*args, **kwargs); Handle() takes no arguments.
+pckt.pcap.Handle.__init__

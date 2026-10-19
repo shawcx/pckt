@@ -21,4 +21,5 @@ classifiers = [
 include = ["pckt*"]
 
 [tool.setuptools.package-data]
-pckt = ["manuf"]
+# py.typed: pcap.pyi types the compiled pckt.pcap
+pckt = ["manuf", "py.typed", "*.pyi"]
