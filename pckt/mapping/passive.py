@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 '''
-Passively map hosts on the local network from ARP and DHCP traffic.
+Passively map hosts on the local network from ARP, DHCP, IPv6 neighbor
+discovery and mDNS traffic.
 
     sudo python3 -m pckt.mapping.passive eth0
     python3 -m pckt.mapping.passive --file capture.pcap
 
 Plain IP traffic isn't used: routed packets carry the router's MAC with the
-remote host's address.
+remote host's address. Neighbor discovery and mDNS stay on the local link.
 '''
 
 import argparse
@@ -14,14 +15,19 @@ import socket
 import struct
 
 from pckt.capture import packets
-from pckt import pcap, vendor, Ethernet, ARP, DHCP
+from pckt import pcap, vendor, Ethernet, ARP, IP, IPv6, ICMPv6, ICMPv6_NeighborAdvert, UDP, DHCP, DNS
 
 UNSPECIFIED = '0.0.0.0'
+UNSPECIFIED6 = '::'
+MDNS_PORT = 5353
+
+# router solicitation and advertisement, neighbor solicitation and advertisement
+NEIGHBOR_DISCOVERY = range(133, 137)
 
 
 class PassiveMapper:
     def __init__(self):
-        # 'aa:bb:cc:dd:ee:ff' => {'mac', 'vendor', 'ip', 'name', 'os'}
+        # 'aa:bb:cc:dd:ee:ff' => {'mac', 'vendor', 'ip', 'ipv6', 'name', 'os'}; ipv6 is a list
         self.hosts = {}
 
     def process(self, data):
@@ -35,6 +41,10 @@ class PassiveMapper:
             (addr, fields) = self.from_arp(pkt[ARP])
         elif DHCP in pkt:
             (addr, fields) = self.from_dhcp(pkt[DHCP])
+        elif ICMPv6 in pkt and IPv6 in pkt:
+            (addr, fields) = self.from_ndp(pkt[Ethernet].src, pkt[IPv6], pkt[ICMPv6])
+        elif DNS in pkt and MDNS_PORT == pkt[UDP].src:
+            (addr, fields) = self.from_mdns(pkt[Ethernet].src, pkt, pkt[DNS])
         else:
             return None
 
@@ -43,10 +53,18 @@ class PassiveMapper:
 
         key = ':'.join('%.2x' % o for o in addr)
         host = self.hosts.setdefault(key, {'mac': key, 'vendor': vendor(addr)})
-        if all(host.get(name) == value for (name, value) in fields.items()):
-            return None
-        host.update(fields)
-        return host
+        changed = False
+        for (name, value) in fields.items():
+            if 'ipv6' == name:
+                # hosts have several, so they're added to the list
+                new = [a for a in value if a not in host.get('ipv6', [])]
+                if new:
+                    host.setdefault('ipv6', []).extend(new)
+                    changed = True
+            elif host.get(name) != value:
+                host[name] = value
+                changed = True
+        return host if changed else None
 
     def from_arp(self, arp):
         # probes use 0.0.0.0 while checking an address is free
@@ -75,6 +93,47 @@ class PassiveMapper:
             fields['os'] = system
 
         return (msg.clientmac, fields)
+
+    def from_ndp(self, src, ip6, msg):
+        if msg.type not in NEIGHBOR_DISCOVERY:
+            return (None, None)
+        addrs = []
+        # duplicate address detection probes use :: while checking an address is free
+        if UNSPECIFIED6 != ip6.src:
+            addrs.append(ip6.src)
+        # an advertisement's target is the sender's own address
+        if isinstance(msg, ICMPv6_NeighborAdvert) and msg.target not in addrs:
+            addrs.append(msg.target)
+        return (src, {'ipv6': addrs} if addrs else None)
+
+    def from_mdns(self, src, pkt, msg):
+        '''a response's address records name the sender when one is for the address it was sent from'''
+        if not msg.qr:
+            return (None, None)
+        sender = pkt[IP].src if IP in pkt else pkt[IPv6].src
+
+        # 'name.local' (lowercased; names are case-insensitive) => (name as sent, [(type, address)])
+        records = {}
+        for rr in msg.answers + msg.additional:
+            if rr.type in (DNS.A, DNS.AAAA) and isinstance(rr.data, str) and rr.name.lower().endswith('.local'):
+                records.setdefault(rr.name.lower(), (rr.name, []))[1].append((rr.type, rr.data))
+
+        # others' records (e.g. from a sleep proxy) don't include the sender's address
+        for (name, addrs) in records.values():
+            if sender in (data for (kind, data) in addrs):
+                break
+        else:
+            return (None, None)
+
+        # labels are decoded as latin-1, but mDNS names are UTF-8
+        fields = {'name': name[:-len('.local')].encode('latin-1').decode('utf-8', 'replace')}
+        ipv4 = [data for (kind, data) in addrs if DNS.A == kind]
+        ipv6 = [data for (kind, data) in addrs if DNS.AAAA == kind]
+        if ipv4:
+            fields['ip'] = sender if sender in ipv4 else ipv4[0]
+        if ipv6:
+            fields['ipv6'] = ipv6
+        return (src, fields)
 
 
 # clients that name themselves in the vendor class (option 60)
@@ -106,13 +165,14 @@ def dhcp_os(msg):
 
 
 def describe(host):
-    return '%s  %-15s %-20s %-8s %s' % (
+    return ('%s  %-15s %-20s %-8s %-12s %s' % (
         host['mac'],
         host.get('ip', ''),
         host.get('name', ''),
         host.get('os', ''),
         host.get('vendor') or '',
-        )
+        ' '.join(host.get('ipv6', [])),
+        )).rstrip()
 
 
 def main():
@@ -126,7 +186,7 @@ def main():
         pd = pcap.open_offline(args.file)
     else:
         pd = pcap.open_live(args.device, 65535, True, 100)
-    pd.setfilter('arp or (udp and (port 67 or port 68))')
+    pd.setfilter('arp or icmp6 or (udp and (port 67 or port 68 or port %d))' % MDNS_PORT)
 
     mapper = PassiveMapper()
     try:

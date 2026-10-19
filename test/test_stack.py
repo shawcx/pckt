@@ -7,9 +7,12 @@ import sys
 import tempfile
 import unittest
 
-from pckt import checksum, Ethernet, ARP, IP, ICMP, ICMP_EchoRequest, ICMP_EchoReply, UDP, DHCP
+from pckt import (
+    checksum, Ethernet, ARP, IP, IPv6, ICMP, ICMP_EchoRequest, ICMP_EchoReply, ICMPv6, ICMPv6_EchoRequest,
+    ICMPv6_NeighborSolicit, ICMPv6_NeighborAdvert, UDP, DHCP, DNS, DNSRR,
+    )
 from pckt.stack.ghost import Ghost, BROADCAST, DHCP_RETRY
-from pckt.mapping.passive import PassiveMapper
+from pckt.mapping.passive import PassiveMapper, describe
 
 try:
     from pckt import pcap
@@ -174,6 +177,23 @@ def arp_from(mac, ip):
     return (Ethernet(src=mac) / ARP(op=ARP.REQUEST, src_mac=mac, src_ip=ip, dst_ip='10.0.0.1')).pack()
 
 
+def ndp_from(mac, src, msg):
+    return (Ethernet(src=mac, dst='33:33:00:00:00:01') / IPv6(src=src, dst='ff02::1') / msg).pack()
+
+
+# mDNS sets the cache-flush bit in the class of a host's unique records
+CACHE_FLUSH = 0x8000
+
+
+def mdns_from(mac, src, records, qr=1, port=5353):
+    ip = IPv6(src=src, dst='ff02::fb') if ':' in src else IP(src=src, dst='224.0.0.251')
+    return (Ethernet(src=mac) / ip / UDP(src=port, dst=5353) / DNS(qr=qr, aa=qr, rd=0, answers=records)).pack()
+
+
+def address_records(name, *addrs):
+    return [DNSRR(name, DNS.AAAA if ':' in a else DNS.A, DNS.IN | CACHE_FLUSH, 120, a) for a in addrs]
+
+
 class TestPassive(unittest.TestCase):
     def test_arp(self):
         mapper = PassiveMapper()
@@ -217,6 +237,58 @@ class TestPassive(unittest.TestCase):
                 host = PassiveMapper().process(dhcp_request(PEER_MAC, vendor_class=vendor_class, params=params))
                 self.assertEqual(expected, host.get('os'))
 
+    def test_ndp(self):
+        mapper = PassiveMapper()
+        # a solicitation's source is the sender's; its target isn't
+        host = mapper.process(ndp_from(PEER_MAC, 'fe80::1', ICMPv6_NeighborSolicit(target='fe80::2')))
+        self.assertEqual(['fe80::1'], host['ipv6'])
+        # an advertisement's target is the sender's too
+        advert = ICMPv6_NeighborAdvert(target='2001:db8::5', flags=ICMPv6_NeighborAdvert.SOLICITED)
+        self.assertEqual(['fe80::1', '2001:db8::5'], mapper.process(ndp_from(PEER_MAC, 'fe80::1', advert))['ipv6'])
+        self.assertIsNone(mapper.process(ndp_from(PEER_MAC, 'fe80::1', advert)))
+        # duplicate address detection: the target may not end up being the sender's
+        self.assertIsNone(mapper.process(ndp_from(PEER_MAC, '::', ICMPv6_NeighborSolicit(target='2001:db8::9'))))
+        # router solicitation
+        host = mapper.process(ndp_from(SERVER_MAC, 'fe80::3', ICMPv6(type=133) / bytes(4)))
+        self.assertEqual(['fe80::3'], host['ipv6'])
+        # other ICMPv6 isn't neighbor discovery
+        self.assertIsNone(mapper.process(ndp_from(GHOST_MAC, 'fe80::4', ICMPv6_EchoRequest())))
+        self.assertEqual(2, len(mapper.hosts))
+
+    def test_mdns(self):
+        mapper = PassiveMapper()
+        records = address_records('Laptop.local', '10.0.0.7', 'fe80::7', '2001:db8::7') + [
+            DNSRR('_ssh._tcp.local', DNS.PTR, DNS.IN, 4500, 'Laptop._ssh._tcp.local')]
+        host = mapper.process(mdns_from(PEER_MAC, '10.0.0.7', records))
+        self.assertEqual(('Laptop', '10.0.0.7', ['fe80::7', '2001:db8::7']), (host['name'], host['ip'], host['ipv6']))
+        # the same records sent over IPv6
+        self.assertIsNone(mapper.process(mdns_from(PEER_MAC, 'fe80::7', records)))
+
+    def test_mdns_ignored(self):
+        mapper = PassiveMapper()
+        records = address_records('laptop.local', '10.0.0.7')
+        # a sleep proxy answering for another host
+        self.assertIsNone(mapper.process(mdns_from(SERVER_MAC, '10.0.0.9', records)))
+        # a query, and a unicast DNS response
+        self.assertIsNone(mapper.process(mdns_from(PEER_MAC, '10.0.0.7', records, qr=0)))
+        self.assertIsNone(mapper.process(mdns_from(PEER_MAC, '10.0.0.7', records, port=53)))
+        # not .local
+        self.assertIsNone(mapper.process(mdns_from(PEER_MAC, '10.0.0.7', address_records('laptop.lan', '10.0.0.7'))))
+        self.assertEqual({}, mapper.hosts)
+
+    def test_mdns_utf8_name(self):
+        # DNS names are the raw label bytes as latin-1; mDNS sends UTF-8
+        name = 'Mätt-Laptop.local'.encode('utf-8').decode('latin-1')
+        host = PassiveMapper().process(mdns_from(PEER_MAC, '10.0.0.7', address_records(name, '10.0.0.7')))
+        self.assertEqual('Mätt-Laptop', host['name'])
+
+    def test_describe(self):
+        mapper = PassiveMapper()
+        mapper.process(arp_from(PEER_MAC, '10.0.0.7'))
+        self.assertEqual('00:50:56:00:aa:bb  10.0.0.7%sVMware' % (' ' * 38), describe(mapper.hosts['00:50:56:00:aa:bb']))
+        host = mapper.process(ndp_from(PEER_MAC, 'fe80::1', ICMPv6_NeighborSolicit(target='fe80::2')))
+        self.assertTrue(describe(host).endswith('VMware       fe80::1'), describe(host))
+
     def test_dhcp_reply_ignored(self):
         mapper = PassiveMapper()
         reply = (Ethernet() / IP() / UDP() / DHCP(type=DHCP.BOOTREPLY, clientmac=PEER_MAC, yourip='10.0.0.9')).pack()
@@ -235,6 +307,8 @@ class TestPassive(unittest.TestCase):
                 arp_from(PEER_MAC, '10.0.0.7'),
                 (Ethernet() / IP() / UDP(src=1, dst=2) / b'filtered out').pack(),
                 dhcp_request(SERVER_MAC, name=b'laptop'),
+                ndp_from(GHOST_MAC, 'fe80::1', ICMPv6_NeighborSolicit(target='fe80::2')),
+                mdns_from(PEER_MAC, '10.0.0.7', address_records('printer.local', '10.0.0.7')),
                 ])
             root = os.path.dirname(os.path.dirname(pcap.__file__))
             result = subprocess.run(
@@ -243,9 +317,11 @@ class TestPassive(unittest.TestCase):
                 )
         self.assertEqual(0, result.returncode, result.stderr)
         lines = result.stdout.splitlines()
-        self.assertEqual(2, len(lines))
+        self.assertEqual(4, len(lines))
         self.assertIn('10.0.0.7', lines[0])
         self.assertIn('laptop', lines[1])
+        self.assertIn('fe80::1', lines[2])
+        self.assertIn('printer', lines[3])
 
 
 if '__main__' == __name__:
