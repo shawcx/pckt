@@ -501,6 +501,12 @@ class TestPassive(unittest.TestCase):
         host = mapper.process(ndp_from(PEER_MAC, 'fe80::1', ICMPv6_NeighborSolicit(target='fe80::2')))
         self.assertTrue(describe(host).endswith('VMware       fe80::1'), describe(host))
 
+    def test_dhcp_truncated_ignored(self):
+        # options ending in a code with no length, which raised IndexError out of process()
+        raw = DHCP(clientmac=PEER_MAC, options=[(DHCP.MESSAGE_TYPE, bytes([DHCP.REQUEST]))], padding=b'').pack()[:-1] + b'\x0c'
+        frame = (Ethernet(src=PEER_MAC) / IP(src='0.0.0.0') / UDP(src=68, dst=67) / raw).pack()
+        self.assertIsNone(PassiveMapper().process(frame))
+
     def test_dhcp_reply_ignored(self):
         mapper = PassiveMapper()
         reply = (Ethernet() / IP() / UDP() / DHCP(type=DHCP.BOOTREPLY, clientmac=PEER_MAC, yourip='10.0.0.9')).pack()

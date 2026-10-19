@@ -125,6 +125,8 @@ class DHCP(Layer):
                 self.options.append(b'\x00')
                 idx += 1
                 continue
+            if idx + 2 > len(pkt) or idx + 2 + pkt[idx + 1] > len(pkt):
+                raise struct.error('truncated DHCP option')
             length = pkt[idx + 1]
             self.options.append((code, pkt[idx + 2:idx + 2 + length]))
             idx += 2 + length
