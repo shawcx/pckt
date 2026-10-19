@@ -1,3 +1,17 @@
+pckt (0.2) unstable; urgency=medium
+
+  * Map hosts from IPv6 neighbor discovery, mDNS and LLDP in the passive
+    mapper, with a new LLDP layer.
+  * Guess the OS of more DHCP clients: Android, busybox and dhcpcd by
+    their vendor class, and Apple and Windows clients by the options
+    they request.
+  * findalldevs() lists every IPv4 and IPv6 address of each interface.
+  * Fail rather than report macOS's placeholder MAC to processes that
+    aren't root.
+  * Require Python 3.11.
+
+ -- Matthew Shaw <mshaw.cx@gmail.com>  Sun, 18 Oct 2026 22:57:14 -0400
+
 pckt (0.1) unstable; urgency=medium
 
   * Initial release.

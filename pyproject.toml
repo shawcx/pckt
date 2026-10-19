@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pckt"
-version = "0.1"
+version = "0.2"
 description = "Packet construction and decoding, with libpcap bindings"
 readme = "README.rst"
 requires-python = ">=3.11"
