@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`pckt` is a Python 3 library for building packets a layer at a time, chaining the layers into a full frame, decoding frames back into layers, and sending or capturing them through its own libpcap binding (`pckt.pcap`). The distribution name on PyPI would be `pckt` (unclaimed as of 2026-09).
+`pckt` is a Python 3 library for building packets a layer at a time, chaining the layers into a full frame, decoding frames back into layers, and sending or capturing them through its own libpcap binding (`pckt.pcap`). It is published on PyPI as `pckt` (sdist only, since 0.3; uploaded with `twine` using the token in `~/.pypirc`).
 
 ## Layout
 
